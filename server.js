@@ -18,6 +18,17 @@ import {
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 const app = express();
+/* Basic-auth для команды: задать CRM_USER и CRM_PASS в окружении.
+   Без них — открытый доступ (локальная разработка). */
+const AUTH_USER = process.env.CRM_USER, AUTH_PASS = process.env.CRM_PASS;
+if (AUTH_USER && AUTH_PASS) {
+  const expected = Buffer.from(`${AUTH_USER}:${AUTH_PASS}`).toString("base64");
+  app.use((req, res, next) => {
+    if (req.headers.authorization === `Basic ${expected}`) return next();
+    res.set("WWW-Authenticate", 'Basic realm="SVP CRM"').status(401).send("Требуется вход");
+  });
+}
+
 app.use(express.json({ limit: "2mb" }));
 app.use(express.static(join(ROOT, "public")));
 

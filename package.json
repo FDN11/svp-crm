@@ -4,7 +4,7 @@
   "description": "CRM для дилерской сети СВП: лиды из парсинга, воронка, сделки",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=22.5" },
+  "engines": { "node": ">=22.13" },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",

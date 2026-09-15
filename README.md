@@ -94,5 +94,9 @@ curl -X POST localhost:3000/api/webhooks/telephony \
 PORT=3000 CRM_DB=/var/lib/svp-crm/crm.db node server.js
 ```
 
-Снаружи закрыть nginx-ом с basic auth или VPN — авторизации в самой CRM пока нет.
+Доступ для команды — общий логин/пароль через переменные `CRM_USER` и `CRM_PASS`
+(без них сервер открыт — режим локальной разработки).
+
+**Railway** (готовый `railway.json`): создать сервис из этого репозитория, подключить Volume в `/data`,
+задать переменные `CRM_DB=/data/crm.db`, `CRM_USER`, `CRM_PASS` и открыть публичный домен.
 Бэкап — копия файла `crm.db` (база в режиме WAL, копировать через `sqlite3 crm.db ".backup copy.db"`).
