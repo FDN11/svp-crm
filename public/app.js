@@ -36,6 +36,7 @@ async function route() {
   if (view === "leads") await renderLeads();
   else if (view === "deals") await renderDeals();
   else if (view === "products") await renderProducts();
+  else if (view === "scripts") renderScripts();
   if (id) view === "leads" ? openLead(Number(id)) : view === "deals" ? openDeal(Number(id)) : null;
   refreshStats();
 }
@@ -93,7 +94,7 @@ async function renderLeads() {
 
 function leadCard(l) {
   const c = el("div", { class: `card p-${l.priority === "высокий" ? "high" : l.priority === "низкий" ? "low" : "mid"}`, draggable: !l.outcome, "data-id": l.id, onclick: () => openLead(l.id) },
-    el("div", { class: "card-title" }, el("span", {}, l.company), l.is_chain ? el("span", { class: "chain" }, `сеть · ${l.points.length}`) : null),
+    el("div", { class: "card-title" }, el("span", {}, l.company), l.is_chain ? el("span", { class: "chain" }, l.points.length > 1 ? `сеть · ${l.points.length}` : "сеть") : null),
     el("div", { class: "card-meta" }, [l.city, l.segment].filter(Boolean).join(" · ")),
     el("div", { class: "card-foot" },
       el("span", {}, l.competitor ? `продаёт ${l.competitor}` : (l.source || "")),
@@ -138,6 +139,7 @@ async function openLead(id) {
     l.points.length ? el("div", { class: "d-section" }, el("h3", {}, `Точки · ${l.points.length}`),
       el("div", { class: "points" }, l.points.map((p) => el("div", {}, p.name !== l.company ? el("b", {}, p.name + " — ") : null, p.address, p.city && p.city !== l.city ? el("span", { class: "pt-city" }, ` · ${p.city}`) : null)))) : null,
 
+    scriptSection(l),
     feedSection("leads", id, l.activities, () => openLead(id)),
   );
   showDrawer();
@@ -260,6 +262,77 @@ async function renderProducts() {
   $("#view").replaceChildren(
     el("div", { class: "view-head" }, el("h1", {}, "Товары"), el("span", { class: "d-sub" }, `${state.products.length} позиций · дилерский прайс`)),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Наименование"), el("th", {}, "Упаковка"), el("th", { class: "num" }, "Вес, кг"), el("th", { class: "num" }, "Дилерская"), el("th", { class: "num" }, "РРЦ"))), el("tbody", {}, rows)));
+}
+
+/* ——— скрипты ——— */
+const S = () => window.SCRIPTS;
+const cityLoc = (c) => !c ? "вашем городе" : c === "Ростов-на-Дону" ? "Ростове-на-Дону" : /ь$/.test(c) ? c.replace(/ь$/, "и") : /а$/.test(c) ? c.replace(/а$/, "е") : /[ыи]$/.test(c) ? c : c + "е";
+const signature = () => { const d = S().signature; let o = {}; try { o = JSON.parse(localStorage.getItem("svp.signature") || "{}"); } catch {} return { ...d, ...o }; };
+function pitchFor(lead) {
+  const P = S().pitches;
+  if (lead.competitor) return P.find((p) => p.competitor);
+  return P.find((p) => p.match && p.match.test(lead.segment || "")) || P.find((p) => p.key === "store");
+}
+function fillTemplate(tpl, lead, pitch) {
+  const sig = signature();
+  const name = (lead.contact_name || "").trim();
+  const map = {
+    company: lead.company, city: lead.city || "", cityLoc: cityLoc(lead.city), name,
+    nameComma: name ? ", " + name : "", nameOrHello: name || "Здравствуйте",
+    competitor: lead.competitor || "текущим поставщиком", segmentParagraph: pitch?.email || "",
+    manager: sig.manager, phone: sig.phone, email: sig.email,
+  };
+  return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => map[k] ?? "");
+}
+const copyText = async (t, btn) => { try { await navigator.clipboard.writeText(t); btn.textContent = "Скопировано"; setTimeout(() => (btn.textContent = "Скопировать"), 1500); } catch { prompt("Скопируйте текст", t); } };
+
+function scriptSection(l) {
+  const pitch = pitchFor(l);
+  const pitchText = fillTemplate(pitch.text, l, pitch);
+  const emailSel = el("select", {}, S().emails.map((e) => el("option", { value: e.key }, e.title)));
+  const subj = el("input", { class: "email-subj", readonly: "" });
+  const body = el("textarea", { class: "email-body", rows: 12 });
+  const mailBtn = el("a", { class: "btn btn-sm", target: "_blank" }, "Открыть в почте");
+  const render = () => {
+    const t = S().emails.find((e) => e.key === emailSel.value);
+    subj.value = fillTemplate(t.subject, l, pitch); body.value = fillTemplate(t.body, l, pitch);
+    mailBtn.href = `mailto:${l.email || ""}?subject=${encodeURIComponent(subj.value)}&body=${encodeURIComponent(body.value)}`;
+  };
+  emailSel.addEventListener("change", render); render();
+  return el("div", { class: "d-section script" }, el("h3", {}, "Скрипт и письмо"),
+    el("div", { class: "pitch" },
+      el("div", { class: "pitch-title" }, pitch.title, el("a", { href: "#scripts", class: "pitch-more" }, "все скрипты →")),
+      el("p", {}, pitchText),
+      el("div", { class: "accents" }, pitch.accents.map((a) => el("span", { class: "tag" }, a))),
+      el("button", { class: "btn btn-sm btn-ghost", onclick: (e) => copyText(pitchText, e.target) }, "Скопировать")),
+    el("details", { class: "objs" }, el("summary", {}, "Возражения"),
+      S().objections.map(([q, a]) => el("div", { class: "obj" }, el("b", {}, q), el("span", {}, a)))),
+    el("div", { class: "email-box" },
+      el("div", { class: "email-head" }, emailSel, el("button", { class: "btn btn-sm", onclick: (e) => copyText(subj.value + "\n\n" + body.value, e.target) }, "Скопировать"), l.email ? mailBtn : el("span", { class: "d-sub" }, "почты нет — добавьте выше")),
+      subj, body,
+      el("div", { class: "d-sub files" }, "Вложения: ", el("a", { href: "/files/svp-dealer-price.pdf", target: "_blank" }, "дилерский прайс PDF"), " · ", el("a", { href: "/files/svp-partner-deck.pdf", target: "_blank" }, "презентация PDF"), " · подпись — в разделе «Скрипты»")));
+}
+
+function renderScripts() {
+  const s = S(); const sig = signature();
+  const sigForm = el("div", { class: "fields sig" }, ...[["manager", "Имя в подписи"], ["phone", "Телефон"], ["email", "Почта"]].map(([k, label]) =>
+    el("label", { class: "field" }, label, el("input", { value: sig[k], onchange: (e) => { const o = signature(); o[k] = e.target.value; localStorage.setItem("svp.signature", JSON.stringify(o)); } }))));
+  const block = (title, kids) => el("section", { class: "doc-block" }, el("h2", {}, title), kids);
+  const kv = (rows) => el("div", { class: "kv" }, rows.map(([k, v]) => el("div", {}, el("b", {}, k), el("span", { html: esc(v).replace(/\[\?[^\]]*\]/g, (m) => `<mark>${m}</mark>`) }))));
+  $("#view").replaceChildren(
+    el("div", { class: "view-head" }, el("h1", {}, "Скрипты и письма"), el("span", { class: "d-sub" }, "заход подставляется в карточку лида по сегменту и конкуренту · [?] — уточнить у заказчика")),
+    el("div", { class: "doc" },
+      block("Подпись в письмах", sigForm),
+      block("На чём стоим", kv(s.facts)),
+      block("Структура звонка · 3–4 минуты", kv(s.call)),
+      block("Заходы по сегментам", el("div", { class: "pitches" }, s.pitches.map((p) => el("div", { class: "pitch" },
+        el("div", { class: "pitch-title" }, p.title), el("div", { class: "d-sub" }, p.pain), el("p", {}, p.text.replace("{{competitor}}", "TLS-Profi")),
+        el("div", { class: "accents" }, p.accents.map((a) => el("span", { class: "tag" }, a))))))),
+      block("Возражения", kv(s.objections)),
+      block("Письма", el("div", { class: "pitches" }, s.emails.map((e) => el("div", { class: "pitch" }, el("div", { class: "pitch-title" }, e.title), el("div", { class: "d-sub" }, "Тема: " + e.subject), el("pre", {}, e.body))))),
+      block("Вложения", el("div", {}, el("div", { class: "files-row" }, el("a", { class: "btn btn-sm", href: "/files/svp-dealer-price.pdf", target: "_blank" }, "Дилерский прайс PDF ↓"), el("a", { class: "btn btn-sm", href: "/files/svp-partner-deck.pdf", target: "_blank" }, "Презентация PDF ↓")),
+        kv(s.attachments.map(([k, v, ok]) => [(ok ? "✓ " : "○ ") + k, v])))),
+      block("Вопросы заказчику до старта звонков", el("ol", { class: "qs" }, s.questions.map((q) => el("li", {}, q))))));
 }
 
 /* ——— лента и комментарии ——— */
