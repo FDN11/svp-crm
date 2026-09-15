@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>СВП CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#leads"><span class="mark">СВП</span><span class="brand-sub">CRM · дилерская сеть</span></a>
+    <nav class="nav">
+      <a href="#leads" data-view="leads">Лиды</a>
+      <a href="#deals" data-view="deals">Сделки</a>
+      <a href="#products" data-view="products">Товары</a>
+    </nav>
+    <div class="top-stats" id="top-stats"></div>
+    <label class="search"><input id="search" type="search" placeholder="Компания, город, телефон" autocomplete="off"></label>
+    <button class="btn btn-accent" id="btn-new-lead">+ Лид</button>
+  </header>
+
+  <main id="view"></main>
+
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-inner" id="drawer-inner"></div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

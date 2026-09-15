@@ -1,0 +1,17 @@
+{
+  "name": "svp-crm",
+  "version": "0.1.0",
+  "description": "CRM для дилерской сети СВП: лиды из парсинга, воронка, сделки",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "import:leads": "node scripts/import-leads.js",
+    "import:products": "node scripts/import-products.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
