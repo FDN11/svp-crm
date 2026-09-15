@@ -88,18 +88,26 @@ app.post("/api/leads/import", (req, res) => {
   const items = Array.isArray(req.body) ? req.body : req.body?.items;
   if (!Array.isArray(items)) return res.status(400).json({ error: "expected array" });
   let added = 0, skipped = 0;
+  let maxId = db.prepare("SELECT COALESCE(MAX(id), 0) AS m FROM leads").get().m;
   const tx = db.prepare(`
-    INSERT INTO leads (ext_id, company, city, region, segment, is_chain, priority, phones, site, points, source, source_note, competitor)
-    VALUES (@ext_id, @company, @city, @region, @segment, @is_chain, @priority, @phones, @site, @points, @source, @source_note, @competitor)
-    ON CONFLICT(ext_id) DO NOTHING`);
+    INSERT INTO leads (ext_id, company, city, region, segment, is_chain, priority, phones, site, email, contact_name, points, source, source_note, competitor)
+    VALUES (@ext_id, @company, @city, @region, @segment, @is_chain, @priority, @phones, @site, @email, @contact_name, @points, @source, @source_note, @competitor)
+    ON CONFLICT(ext_id) DO UPDATE SET
+      email = COALESCE(leads.email, excluded.email),
+      site = COALESCE(leads.site, excluded.site),
+      competitor = COALESCE(excluded.competitor, leads.competitor),
+      phones = CASE WHEN leads.phones = '[]' THEN excluded.phones ELSE leads.phones END,
+      points = CASE WHEN length(excluded.points) > length(leads.points) THEN excluded.points ELSE leads.points END`);
   for (const b of items) {
     const info = tx.run({
       ext_id: b.ext_id ?? b.id ?? null, company: b.company, city: b.city ?? null, region: b.region ?? null,
       segment: b.segment ?? null, is_chain: b.is_chain ? 1 : 0, priority: b.priority ?? "средний",
-      phones: JSON.stringify(b.phones ?? []), site: b.site ?? null, points: JSON.stringify(b.points ?? []),
+      phones: JSON.stringify(b.phones ?? []), site: b.site ?? null, email: b.email ?? null, contact_name: b.contact_name ?? null,
+      points: JSON.stringify(b.points ?? []),
       source: b.source ?? "import", source_note: b.source_note ?? null, competitor: b.sells_competitor_svp ?? b.competitor ?? null,
     });
-    if (info.changes) { added++; log("lead", info.lastInsertRowid, "system", `Импорт · ${b.source ?? "import"}`); } else skipped++;
+    // changes=1 и для UPDATE, поэтому «новый» определяем по lastInsertRowid, которого не было раньше
+    if (info.changes && info.lastInsertRowid > maxId) { maxId = info.lastInsertRowid; added++; log("lead", info.lastInsertRowid, "system", `Импорт · ${b.source ?? "import"}`); } else skipped++;
   }
   res.json({ added, skipped });
 });
