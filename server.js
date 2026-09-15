@@ -251,6 +251,25 @@ app.post("/api/leads/:id/activities", addActivity("leads", "lead"));
 app.post("/api/deals/:id/activities", addActivity("deals", "deal"));
 
 /* ——— товары ——— */
+/* Импорт/обновление справочника товаров из прайса сайта (upsert по sku) */
+app.post("/api/products/import", (req, res) => {
+  const items = Array.isArray(req.body) ? req.body : [];
+  const up = db.prepare(`
+    INSERT INTO products (sku, name, group_name, pack_type, price, rrc, weight_kg)
+    VALUES (@sku, @name, @group_name, @pack_type, @price, @rrc, @weight_kg)
+    ON CONFLICT(sku) DO UPDATE SET name=excluded.name, group_name=excluded.group_name, pack_type=excluded.pack_type,
+      price=excluded.price, rrc=excluded.rrc, weight_kg=excluded.weight_kg, active=1`);
+  let n = 0;
+  for (const p of items) {
+    if (!p.name) continue;
+    up.run({ sku: String(p.sku || p.eanRu || p.eanIntl || p.name), name: p.name, group_name: p.group_name || p.group || null,
+             pack_type: p.pack_type || p.packType || null, price: Number(p.price ?? p.priceTotal) || 0,
+             rrc: Number(p.rrc) || null, weight_kg: Number(p.weight_kg ?? p.weightKg) || null });
+    n++;
+  }
+  res.json({ upserted: n });
+});
+
 app.get("/api/products", (_req, res) => {
   res.json(db.prepare(`SELECT * FROM products WHERE active = 1 ORDER BY group_name, name`).all());
 });

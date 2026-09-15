@@ -20,6 +20,9 @@ npm run import:leads -- ../leads/leads-pilot.json
 
 # дилерский прайс с сайта → справочник товаров
 npm run import:products -- ../site/src/data/price-list.json
+
+# то же в облачную CRM (адрес и логин:пароль третьим и четвёртым аргументом)
+npm run import:leads -- ../leads/leads-pilot.json https://svp-crm-production.up.railway.app svp:ПАРОЛЬ
 ```
 
 Повторный импорт лидов безопасен: дубли по `id` из парсинга пропускаются.
@@ -66,6 +69,7 @@ data/crm.db      база (в .gitignore)
 | POST/PATCH/DELETE | `/api/deals/:id/items[/:itemId]` | позиции сделки |
 | POST | `/api/leads/:id/activities`, `/api/deals/:id/activities` | комментарий в ленту |
 | GET | `/api/products`, `/api/stats`, `/api/meta` | справочники и сводка |
+| POST | `/api/products/import` | обновить справочник из прайса |
 | POST | `/api/webhooks/:source` | входящие события извне |
 
 ## Интеграции (задел)
