@@ -19,7 +19,7 @@ npm start            # http://localhost:3000
 npm run import:leads -- ../leads/leads-pilot.json
 
 # дилерский прайс с сайта → справочник товаров
-npm run import:products -- ../site/src/data/price-list.json
+npm run import:products -- ../../site/src/data/price-list.json
 
 # то же в облачную CRM (адрес и логин:пароль третьим и четвёртым аргументом)
 npm run import:leads -- ../leads/leads-pilot.json https://svp-crm-production.up.railway.app svp:ПАРОЛЬ
