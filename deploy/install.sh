@@ -2,7 +2,7 @@
 # Установка СВП CRM на чистый Ubuntu 24.04 (VPS Beget). Запускать от root:
 #   bash install.sh crm.svpbrand.com admin@svpbrand.com
 set -euo pipefail
-DOMAIN="${1:?домен, например crm.svpbrand.com}"; EMAIL="${2:?e-mail для Let's Encrypt}"
+DOMAIN="${1:?домен, например crm.svpbrand.com}"; EMAIL="${2:?e-mail для Lets Encrypt}"
 APP_DIR=/opt/svp-crm; DATA_DIR=/var/lib/svp-crm; REPO=https://github.com/FDN11/svp-crm.git
 
 apt-get update -qq && apt-get install -y -qq curl git nginx certbot python3-certbot-nginx sqlite3 ufw >/dev/null
