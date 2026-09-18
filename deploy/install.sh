@@ -2,6 +2,7 @@
 # Установка СВП CRM на чистый Ubuntu 24.04 (VPS Beget). Запускать от root:
 #   bash install.sh crm.svpbrand.com admin@svpbrand.com
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 DOMAIN="${1:?домен, например crm.svpbrand.com}"; EMAIL="${2:?e-mail для Lets Encrypt}"
 APP_DIR=/opt/svp-crm; DATA_DIR=/var/lib/svp-crm; REPO=https://github.com/FDN11/svp-crm.git
 
@@ -13,6 +14,7 @@ fi
 id -u svpcrm &>/dev/null || useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin svpcrm
 mkdir -p "$DATA_DIR/backups" && chown -R svpcrm:svpcrm "$DATA_DIR"
 
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 if [ -d "$APP_DIR/.git" ]; then git -C "$APP_DIR" pull -q; else git clone -q "$REPO" "$APP_DIR"; fi
 cd "$APP_DIR" && npm ci --omit=dev --silent && chown -R svpcrm:svpcrm "$APP_DIR"
 
