@@ -30,17 +30,19 @@ const state = { meta: null, view: "leads", q: "", city: "", segment: "", product
 /* ——— маршрутизация ——— */
 window.addEventListener("hashchange", route);
 async function route() {
-  const hash = location.hash.slice(1) || "leads";
+  const hash = location.hash.slice(1) || "today";
   const [view, id] = hash.split("/");
   state.view = view;
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
-  if (view === "leads") await renderLeads();
+  if (view === "today") await renderToday();
+  else if (view === "leads") await renderLeads();
   else if (view === "deals") await renderDeals();
   else if (view === "products") await renderProducts();
   else if (view === "scripts") renderScripts();
   else if (view === "companies") await renderCompanies();
   else if (view === "settings") await renderSettings();
   else if (view === "mail") await renderMail();
+  else if (view === "sequences") await renderSequences();
   if (id) view === "leads" ? openLead(Number(id)) : view === "deals" ? openDeal(Number(id)) : view === "companies" ? openCompany(Number(id)) : null;
   refreshStats();
 }
@@ -51,12 +53,10 @@ async function refreshStats() {
   const deals = s.deals.filter((r) => !r.outcome);
   const amount = deals.reduce((a, r) => a + r.amount, 0);
   $("#top-stats").innerHTML = `
-    <span>Лидов в работе <b>${active}</b></span>
-    <span>Сделок <b>${deals.reduce((a, r) => a + r.n, 0)}</b> на <b>${rub(amount)}</b></span>
-    <span>Клиентов <b>${s.companies?.n ?? 0}</b></span>
-    ${s.reorder_due ? `<a class="due" href="#companies">Пора заказывать <b>${s.reorder_due}</b></a>` : ""}
-    ${s.mail?.unassigned ? `<a class="due" href="#mail">Неразобранных писем <b>${s.mail.unassigned}</b></a>` : ""}
-    ${s.due_today ? `<span class="due">Касаний сегодня <b>${s.due_today}</b></span>` : ""}`;
+    <span title="Лидов в работе · сделок в работе · клиентов">${active} · ${deals.reduce((a, r) => a + r.n, 0)} / ${rub(amount)} · ${s.companies?.n ?? 0}</span>
+    ${s.reorder_due ? `<a class="due" href="#companies" title="Пора заказывать">↻ <b>${s.reorder_due}</b></a>` : ""}
+    ${s.mail?.unassigned ? `<a class="due" href="#mail" title="Неразобранных писем">✉ <b>${s.mail.unassigned}</b></a>` : ""}
+    ${s.due_today ? `<a class="due" href="#today" title="Касаний сегодня">☎ <b>${s.due_today}</b></a>` : ""}`;
 }
 
 /* ——— ЛИДЫ ——— */
@@ -69,10 +69,12 @@ async function renderLeads() {
   const cities = [...new Set(tails.map((l) => l.city).filter(Boolean))].sort();
   const segments = [...new Set(tails.map((l) => l.segment).filter(Boolean))].sort();
 
+  const withEmail = leads.filter((l) => l.email && l.stage === "new");
   const head = el("div", { class: "view-head" },
     el("h1", {}, "Лиды"),
     el("span", { class: "d-sub" }, `${leads.length} в работе`),
     el("div", { class: "filters" },
+      withEmail.length ? el("button", { class: "btn btn-sm", title: "Запустить холодную цепочку для всех новых лидов с e-mail в текущем фильтре", onclick: async () => { if (!confirm(`Запустить цепочку писем для ${withEmail.length} новых лидов с e-mail?`)) return; const r = await api("/sequences/start", { method: "POST", body: { lead_ids: withEmail.map((l) => l.id) } }); alert(`В цепочке: ${r.started}. Пропущено: ${r.skipped.length}`); route(); } }, `▶ В цепочку (${withEmail.length})`) : null,
       select(["Все города", ...cities], state.city, (v) => { state.city = v; renderLeads(); }),
       select(["Все сегменты", ...segments], state.segment, (v) => { state.segment = v; renderLeads(); }),
     ));
@@ -133,6 +135,7 @@ async function openLead(id) {
         ? el("button", { class: "btn btn-accent", title: "Создаст карточку клиента и первую сделку", onclick: async () => { const d = await api(`/leads/${id}/convert`, { method: "POST", body: {} }); location.hash = `deals/${d.id}`; } }, "В клиенты и сделку →")
         : el("a", { class: "btn btn-accent", href: `#deals/${l.deal_id}` }, `Сделка #${l.deal_id} →`),
       l.company_id ? el("a", { class: "btn btn-sm btn-ghost", href: `#companies/${l.company_id}` }, "Карточка клиента") : null,
+      !l.outcome && l.email ? el("button", { class: "btn btn-sm btn-ghost", title: "3 письма: заход → напоминание через 4 дня → «как образцы» через 7. Остановится сама при ответе", onclick: async () => { const r = await api("/sequences/start", { method: "POST", body: { lead_ids: [id] } }); alert(r.started ? "Лид в цепочке — первое письмо уйдёт в ближайшее рабочее окно" : "Не запущено: " + r.skipped[0]?.reason); openLead(id); } }, "▶ В цепочку писем") : null,
       ...S.LEAD_OUTCOMES.filter((o) => o.key !== "won").map((o) =>
         el("button", { class: "btn btn-sm" + (l.outcome === o.key ? " btn-ok" : ""), onclick: async () => { await patchLead(id, { outcome: l.outcome === o.key ? null : o.key }); openLead(id); } }, o.title))),
 
@@ -558,6 +561,51 @@ async function renderMail() {
         el("div", { class: "col-body" }, recent.map((m) => el("div", { class: `mail-row ${m.direction}` + (m.seen ? "" : " unread"), onclick: () => openMessage(m.id) },
           el("div", { class: "mr-head" }, el("span", { class: "mr-who" }, m.direction === "in" ? (m.from_name || m.from_addr) : `→ ${m.to_addrs.map((t) => t.address).join(", ")}`), el("span", { class: "mr-date" }, fmtDate(m.date), el("span", { class: "mr-acc" }, ` · ${m.account}@`))),
           el("div", { class: "mr-subj" }, m.subject || "(без темы)", m.entity_type === "ignored" ? el("span", { class: "tag" }, "скрыто") : m.entity_type ? el("span", { class: "tag" }, m.entity_type === "lead" ? "лид" : m.entity_type === "deal" ? "сделка" : "клиент") : el("span", { class: "tag warn" }, "не привязано"))))))));
+}
+
+/* ——— СЕГОДНЯ ——— */
+const linkTo = (type, id) => `#${type === "company" ? "companies" : type + "s"}/${id}`;
+const openEntity = (type, id) => { location.hash = linkTo(type, id); };
+async function renderToday() {
+  const t = await api("/today");
+  const me = state.meta.user;
+  const block = (title, count, hint, kids, cls = "") => el("section", { class: "today-block " + cls }, el("div", { class: "tb-head" }, el("h2", {}, title), count ? el("span", { class: "tb-count" }, String(count)) : null, hint ? el("span", { class: "d-sub" }, hint) : null), kids?.length ? el("div", { class: "tb-list" }, kids) : el("div", { class: "empty small" }, "Пусто — хорошо"));
+  const row = (main, sub, right, onclick, cls = "") => el("div", { class: "tb-row " + cls, onclick }, el("div", { class: "tb-main" }, el("b", {}, main), sub ? el("span", {}, sub) : null), right ? el("div", { class: "tb-right" }, right) : null);
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? "Доброе утро" : hour < 18 ? "Добрый день" : "Добрый вечер";
+  $("#view").replaceChildren(
+    el("div", { class: "view-head" }, el("h1", {}, `${greet}, ${me.name.split(" ")[0]}`),
+      el("span", { class: "d-sub" }, `сегодня: ${t.done.emails} писем · ${t.done.comments} комментариев · ${t.done.stages} движений по воронке${t.done.won.n ? ` · выиграно ${t.done.won.n} на ${rub(t.done.won.amount)}` : ""}${t.done.sequence_sent ? ` · цепочка отправила ${t.done.sequence_sent}` : ""}`)),
+    el("div", { class: "today" },
+      block("Заявки с сайта", t.fresh.length, "новые, ещё не тронуты", t.fresh.map((l) => row(l.company, [l.contact_name, l.city, l.phones[0]].filter(Boolean).join(" · "), fmtDate(l.created_at), () => openEntity("lead", l.id), "hot")), t.fresh.length ? "accent" : ""),
+      block("Ответили", t.replied.length, "входящие без нашего ответа за 7 дней", t.replied.map((m) => row(m.title || m.from_name || m.from_addr, `${m.subject} — ${m.snippet?.slice(0, 90)}`, fmtDate(m.date), () => openMessage(m.mail_id), m.seen ? "" : "unread"))),
+      block("Неразобранные письма", t.unassigned.length, null, t.unassigned.slice(0, 6).map((m) => row(m.from_name || m.from_addr, m.subject, fmtDate(m.date), () => { location.hash = "mail"; })).concat(t.unassigned.length > 6 ? [el("a", { class: "text-link", href: "#mail" }, `ещё ${t.unassigned.length - 6} → в «Почту»`)] : [])),
+      block("Касания на сегодня", t.touches.length, "следующее действие с датой ≤ сегодня", t.touches.map((x) => row(x.title, `${x.next_action || "касание"} · ${x.type === "lead" ? "лид" : "сделка"}${x.city ? " · " + x.city : ""}`, el("span", { class: isDue(x.next_at) && daysUntil(x.next_at) < 0 ? "due" : "" }, fmtDay(x.next_at)), () => openEntity(x.type, x.id)))),
+      block("Пора заказывать", t.reorder.length, "ритм подошёл, открытой сделки нет", t.reorder.map((c) => row(c.name, `${c.orders_count} заказов · ${rub(c.total_amount)} · последний ${fmtDay(c.last_order_at)}${c.phones[0] ? " · " + c.phones[0] : ""}`, el("span", { class: "due" }, dueLabel(c.next_order_at)), () => openEntity("company", c.id)))),
+      block("Зависшие сделки", t.stale.length, `без движения больше 7 дней`, t.stale.map((d) => row(d.title, `${state.meta.DEAL_STAGES.find((s) => s.key === d.stage)?.title} · ${rub(d.amount)}`, `${d.days} дн.`, () => openEntity("deal", d.id))))));
+}
+
+/* ——— ЦЕПОЧКИ (настройки и очередь) ——— */
+async function renderSequences() {
+  const s = await api("/sequences");
+  const set = (k, v) => api("/sequences/settings", { method: "POST", body: { [k]: v } }).then(renderSequences);
+  const st = s.settings;
+  const field = (label, k, type = "text", extra = {}) => el("label", { class: "field" }, label, el("input", { type, value: st[k] ?? "", ...extra, onchange: (e) => set(k, e.target.value) }));
+  $("#view").replaceChildren(
+    el("div", { class: "view-head" }, el("h1", {}, "Цепочки писем"), el("span", { class: "d-sub" }, `сегодня отправлено ${s.sent_today} из ${st.seq_daily_limit} · ${s.in_work_hours ? "рабочее окно открыто" : "вне рабочего окна"} · ${st.seq_enabled === "1" ? "включены" : "выключены"}`)),
+    el("div", { class: "doc" },
+      el("section", { class: "doc-block" }, el("h2", {}, "Настройки"),
+        el("div", { class: "fields sig" },
+          el("label", { class: "field inline" }, el("input", { type: "checkbox", checked: st.seq_enabled === "1" ? "" : null, onchange: (e) => set("seq_enabled", e.target.checked ? "1" : "0") }), " Отправка включена"),
+          field("Писем в день", "seq_daily_limit", "number", { min: 1, max: 100 }), field("Рабочие часы (МСК, пн–пт)", "seq_hours"),
+          el("label", { class: "field" }, "Ящик", select(["dealers", "sales"], st.seq_account, (v) => set("seq_account", v))),
+          field("Имя в подписи", "seq_signature_name"), field("Телефон в подписи", "seq_signature_phone")),
+        el("div", { class: "d-sub", style: "margin-top:10px" }, "Письма уходят по одному со случайными паузами 10–25 минут только в рабочие часы. Первое — без вложений. Цепочка останавливается сама, если контакт ответил, лид взят в работу или закрыт, письмо не доставлено. Ответ «нет» переводит лид в «Отказ».")),
+      el("section", { class: "doc-block" }, el("h2", {}, "Шаги"), el("div", { class: "kv" }, s.sequences[0].steps.map((x, i) => el("div", {}, el("b", {}, `Письмо ${i + 1}`), el("span", {}, `${S().emails.find((e) => e.key === x.template)?.title}${x.delay ? ` — через ${x.delay} дн. после предыдущего` : " — сразу"}`))))),
+      el("section", { class: "doc-block" }, el("h2", {}, `Очередь · ${s.queue.length} лидов`),
+        s.queue.length ? el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Компания"), el("th", {}, "Город"), el("th", {}, "E-mail"), el("th", {}, "Шаг"), el("th", {}, "Следующее письмо"), el("th", {}))),
+          el("tbody", {}, s.queue.map((q) => el("tr", {}, el("td", {}, el("a", { href: `#leads/${q.lead_id}` }, q.company)), el("td", {}, q.city || ""), el("td", {}, q.email), el("td", {}, `${q.step + 1} из 3`), el("td", {}, fmtDate(q.next_at)), el("td", {}, el("button", { class: "btn btn-sm btn-ghost", onclick: async () => { await api("/sequences/stop", { method: "POST", body: { lead_id: q.lead_id } }); renderSequences(); } }, "Стоп")))))) : el("div", { class: "empty" }, "Очередь пуста — запустите цепочку из карточки лида или кнопкой «В цепочку» над доской лидов"),
+        el("div", { class: "d-sub", style: "margin-top:8px" }, `Всего: ${s.stats.map((x) => `${x.status} ${x.n}`).join(", ") || "—"}`))));
 }
 
 /* ——— лента и комментарии ——— */

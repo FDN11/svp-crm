@@ -292,3 +292,30 @@ textarea.note { width: 100%; padding: 8px 10px; background: var(--bg); border: 1
 .top .search { flex: 1 1 120px; min-width: 100px; }
 .search input { width: 100%; max-width: 260px; }
 #btn-new-lead { white-space: nowrap; }
+
+/* ——— сегодня ——— */
+.today { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 12px; align-items: start; }
+.today-block { background: var(--surface); border: 1px solid var(--border); }
+.today-block.accent { border-color: var(--accent); }
+.tb-head { display: flex; align-items: baseline; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.tb-head h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--text); font-weight: 500; margin: 0; }
+.tb-count { color: var(--accent); font-weight: 500; }
+.tb-list { display: flex; flex-direction: column; }
+.tb-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px; }
+.tb-row:last-child { border-bottom: 0; }
+.tb-row:hover { background: var(--surface-2); }
+.tb-row.hot b { color: var(--accent); }
+.tb-row.unread b::before { content: "● "; color: var(--accent); font-size: 9px; vertical-align: 2px; }
+.tb-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tb-main b { font-weight: 500; }
+.tb-main span { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-right { color: var(--dim); font-size: 12px; white-space: nowrap; }
+.empty.small { padding: 16px; font-size: 13px; }
+.text-link { display: block; padding: 8px 14px; font-size: 12px; color: var(--muted); }
+.text-link:hover { color: var(--accent); }
+.nav a[data-view=today] { font-weight: 500; }
+@media (max-width: 1500px) { .nav a { padding: 8px 9px; } }
+
+.top-stats { gap: 10px; }
+.top-stats a.due { padding: 3px 8px; border: 1px solid var(--warn); }
+@media (max-width: 1250px) { .top-stats span:not(.due) { display: inline; } }

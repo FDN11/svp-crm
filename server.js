@@ -23,6 +23,8 @@ const app = express();
 import { sessionMiddleware, usersRoutes, bootstrapAdmin } from "./auth.js";
 import { companiesRoutes } from "./companies.js";
 import { mailRoutes, startMailSync } from "./mail.js";
+import { sequencesRoutes, startSequences, stopRun } from "./sequences.js";
+import { todayRoutes } from "./today.js";
 
 /* За nginx/Railway — доверяем X-Forwarded-Proto для Secure-cookie */
 app.set("trust proxy", 1);
@@ -33,6 +35,8 @@ bootstrapAdmin();
 usersRoutes(app);
 companiesRoutes(app);
 mailRoutes(app);
+sequencesRoutes(app);
+todayRoutes(app);
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 /* Снимок базы для переноса/бэкапа — только администратору. VACUUM INTO даёт согласованную копию при WAL. */
@@ -141,11 +145,13 @@ app.patch("/api/leads/:id", (req, res) => {
     if (!leadStageKeys.has(b.stage)) return res.status(400).json({ error: "bad stage" });
     sets.push(`stage = ?`); params.push(b.stage);
     if (b.stage !== lead.stage) log("lead", id, "stage", `Этап: ${LEAD_STAGES.find(s => s.key === lead.stage)?.title} → ${LEAD_STAGES.find(s => s.key === b.stage)?.title}`);
+    if (["contacted", "qualified"].includes(b.stage)) stopRun(id, "лид взят в работу");
   }
   if ("outcome" in b) {
     if (b.outcome !== null && !leadOutcomeKeys.has(b.outcome)) return res.status(400).json({ error: "bad outcome" });
     sets.push(`outcome = ?`); params.push(b.outcome);
     log("lead", id, "stage", b.outcome ? `Исход: ${LEAD_OUTCOMES.find(s => s.key === b.outcome)?.title}` : "Возвращён в работу");
+    if (b.outcome) stopRun(id, "лид закрыт");
   }
   if (!sets.length) return res.json(lead);
   sets.push(`updated_at = datetime('now')`);
@@ -357,4 +363,5 @@ app.post("/api/webhooks/:source", (req, res) => {
 app.listen(PORT, () => {
   console.log(`СВП CRM → http://localhost:${PORT}`);
   startMailSync();
+  startSequences();
 });

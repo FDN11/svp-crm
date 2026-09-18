@@ -62,6 +62,8 @@ export function matchEntity({ addresses, inReplyTo, refs }) {
 }
 
 const TABLE = { lead: "leads", company: "companies", deal: "deals" };
+/* Подписчики на входящие письма: (msg, entity) => void. Регистрирует sequences.js. */
+export const inboundHooks = [];
 function noteInFeed(msg, entity) {
   const who = msg.direction === "in" ? `от ${msg.from_name || msg.from_addr}` : `→ ${(msg.to_addrs[0]?.address) || ""}`;
   log(entity.entity_type, entity.entity_id, "email", `${msg.direction === "in" ? "Письмо" : "Отправлено"} ${who}: ${msg.subject || "(без темы)"}`, { mail_id: msg.id, direction: msg.direction }, msg.direction === "in" ? msg.account + "@" : undefined);
@@ -130,6 +132,7 @@ function saveParsed(acc, folder, uid, parsed, { direction, entity } = {}) {
   }
   const msg = rowToMessage(db.prepare(`SELECT * FROM mail_messages WHERE id = ?`).get(id));
   if (entity) noteInFeed(msg, entity);
+  if (direction === "in" && !siteApp) for (const h of inboundHooks) { try { h(msg, entity); } catch (e) { console.error("inbound hook:", e.message); } }
   return msg;
 }
 
