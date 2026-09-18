@@ -300,10 +300,14 @@ app.post("/api/products/import", (req, res) => {
     VALUES (@sku, @name, @group_name, @pack_type, @price, @rrc, @weight_kg)
     ON CONFLICT(sku) DO UPDATE SET name=excluded.name, group_name=excluded.group_name, pack_type=excluded.pack_type,
       price=excluded.price, rrc=excluded.rrc, weight_kg=excluded.weight_kg, active=1`);
-  let n = 0;
+  let n = 0; const seen = new Set();
   for (const p of items) {
     if (!p.name) continue;
-    up.run({ sku: String(p.sku || p.eanRu || p.eanIntl || p.name), name: p.name, group_name: p.group_name || p.group || null,
+    // в прайсе у чёрной упаковки тот же EAN, что у обычной — повтор штрихкода в партии ключуем по названию
+    let sku = String(p.sku || p.eanRu || p.eanIntl || p.name);
+    if (seen.has(sku)) sku = `${sku}|${p.name}`;
+    seen.add(sku);
+    up.run({ sku, name: p.name, group_name: p.group_name || p.group || null,
              pack_type: p.pack_type || p.packType || null, price: Number(p.price ?? p.priceTotal) || 0,
              rrc: Number(p.rrc) || null, weight_kg: Number(p.weight_kg ?? p.weightKg) || null });
     n++;
