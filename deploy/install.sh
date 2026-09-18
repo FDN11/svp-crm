@@ -21,14 +21,14 @@ cd "$APP_DIR" && npm ci --omit=dev --silent && chown -R svpcrm:svpcrm "$APP_DIR"
 # окружение: пароль администратора и токен вебхуков создаются один раз
 ENV=/etc/svp-crm.env
 if [ ! -f "$ENV" ]; then
-  ADMIN_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+  ADMIN_PASS=$(openssl rand -hex 8)
   cat > "$ENV" <<ENVEOF
 PORT=3000
 CRM_DB=$DATA_DIR/crm.db
 CRM_USER=admin
 CRM_PASS=$ADMIN_PASS
 CRM_ADMIN_NAME=Администратор
-CRM_WEBHOOK_TOKEN=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)
+CRM_WEBHOOK_TOKEN=$(openssl rand -hex 16)
 NODE_ENV=production
 ENVEOF
   chmod 600 "$ENV"
