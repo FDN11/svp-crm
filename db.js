@@ -173,6 +173,51 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT NOT NULL
 );
 
+/* Почта: письма обоих ящиков, входящие и исходящие. Привязка к лиду / компании / сделке.
+   entity_type NULL = «неразобранное». */
+CREATE TABLE IF NOT EXISTS mail_messages (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  account      TEXT NOT NULL,                 -- dealers | sales
+  folder       TEXT NOT NULL,                 -- inbox | sent
+  uid          INTEGER,
+  message_id   TEXT UNIQUE,
+  in_reply_to  TEXT,
+  refs         TEXT DEFAULT '[]',             -- JSON: References
+  direction    TEXT NOT NULL,                 -- in | out
+  from_addr    TEXT, from_name TEXT,
+  to_addrs     TEXT DEFAULT '[]',             -- JSON [{address,name}]
+  cc_addrs     TEXT DEFAULT '[]',
+  subject      TEXT,
+  text         TEXT,
+  html         TEXT,
+  snippet      TEXT,
+  date         TEXT,
+  has_attachments INTEGER DEFAULT 0,
+  entity_type  TEXT,                          -- lead | company | deal | NULL
+  entity_id    INTEGER,
+  seen         INTEGER DEFAULT 0,
+  created_at   TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mail_entity ON mail_messages(entity_type, entity_id, date);
+CREATE INDEX IF NOT EXISTS idx_mail_from ON mail_messages(from_addr);
+CREATE INDEX IF NOT EXISTS idx_mail_unassigned ON mail_messages(entity_type, direction, date);
+
+CREATE TABLE IF NOT EXISTS mail_attachments (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id   INTEGER NOT NULL REFERENCES mail_messages(id) ON DELETE CASCADE,
+  filename     TEXT,
+  content_type TEXT,
+  size         INTEGER,
+  path         TEXT NOT NULL                  -- относительно каталога файлов
+);
+
+/* Состояние синхронизации по ящику и папке */
+CREATE TABLE IF NOT EXISTS mail_state (
+  account TEXT NOT NULL, folder TEXT NOT NULL,
+  uidvalidity INTEGER, last_uid INTEGER DEFAULT 0, synced_at TEXT,
+  PRIMARY KEY (account, folder)
+);
+
 CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(stage, outcome);
 CREATE INDEX IF NOT EXISTS idx_companies_next ON companies(status, next_order_at);
 CREATE INDEX IF NOT EXISTS idx_deals_stage ON deals(stage, outcome);

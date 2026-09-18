@@ -258,3 +258,37 @@ textarea.note { width: 100%; padding: 8px 10px; background: var(--bg); border: 1
 .top-stats > * { white-space: nowrap; }
 @media (max-width: 1500px) { .brand-sub { display: none; } .search input { width: 180px; } .top { gap: 14px; } }
 @media (max-width: 1250px) { .top-stats span:not(.due) { display: none; } }
+
+/* ——— почта ——— */
+.mail-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.mail-row { padding: 8px 10px; background: var(--bg); border-left: 2px solid var(--border-strong); cursor: pointer; font-size: 13px; }
+.mail-row:hover { border-left-color: var(--accent); }
+.mail-row.out { border-left-color: var(--ok); }
+.mail-row.unread .mr-subj { font-weight: 500; color: var(--text); }
+.mr-head { display: flex; justify-content: space-between; gap: 8px; }
+.mr-who { font-weight: 500; }
+.mr-date, .mr-acc { color: var(--dim); font-size: 12px; }
+.mr-subj { color: var(--muted); margin-top: 2px; display: flex; gap: 8px; align-items: center; }
+.mr-snip { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tag.warn { border-color: var(--warn); color: var(--warn); }
+.composer { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg); border: 1px solid var(--accent); margin: 8px 0; }
+.composer textarea { width: 100%; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: 13px; line-height: 1.5; resize: vertical; }
+.composer .field input { background: var(--surface); }
+.modal { position: fixed; inset: 0; z-index: 60; background: rgb(0 0 0 / .55); display: grid; place-items: center; padding: 24px; }
+.modal-box { width: min(760px, 100%); max-height: 90vh; overflow: auto; background: var(--surface); border: 1px solid var(--border); padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+.mail-body { white-space: pre-wrap; font: inherit; font-size: 14px; line-height: 1.5; margin: 0; padding: 12px; background: var(--bg); border-left: 2px solid var(--border-strong); max-height: 55vh; overflow: auto; }
+.atts { display: flex; flex-wrap: wrap; gap: 8px; }
+.atts a { font-size: 13px; padding: 4px 8px; border: 1px solid var(--border); }
+.atts a:hover { border-color: var(--accent); }
+.mail-cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; align-items: start; }
+.mail-card { cursor: default; }
+.mail-card.unread { border-left-color: var(--accent); }
+.assign { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.assign-q { flex: 1; min-width: 180px; padding: 6px 10px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: 13px; }
+.assign-res { display: flex; flex-wrap: wrap; gap: 4px; width: 100%; }
+@media (max-width: 1000px) { .mail-cols { grid-template-columns: 1fr; } }
+
+.top > * { flex: none; }
+.top .search { flex: 1 1 120px; min-width: 100px; }
+.search input { width: 100%; max-width: 260px; }
+#btn-new-lead { white-space: nowrap; }

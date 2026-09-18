@@ -40,6 +40,7 @@ async function route() {
   else if (view === "scripts") renderScripts();
   else if (view === "companies") await renderCompanies();
   else if (view === "settings") await renderSettings();
+  else if (view === "mail") await renderMail();
   if (id) view === "leads" ? openLead(Number(id)) : view === "deals" ? openDeal(Number(id)) : view === "companies" ? openCompany(Number(id)) : null;
   refreshStats();
 }
@@ -54,6 +55,7 @@ async function refreshStats() {
     <span>Сделок <b>${deals.reduce((a, r) => a + r.n, 0)}</b> на <b>${rub(amount)}</b></span>
     <span>Клиентов <b>${s.companies?.n ?? 0}</b></span>
     ${s.reorder_due ? `<a class="due" href="#companies">Пора заказывать <b>${s.reorder_due}</b></a>` : ""}
+    ${s.mail?.unassigned ? `<a class="due" href="#mail">Неразобранных писем <b>${s.mail.unassigned}</b></a>` : ""}
     ${s.due_today ? `<span class="due">Касаний сегодня <b>${s.due_today}</b></span>` : ""}`;
 }
 
@@ -146,6 +148,7 @@ async function openLead(id) {
       el("div", { class: "points" }, l.points.map((p) => el("div", {}, p.name !== l.company ? el("b", {}, p.name + " — ") : null, p.address, p.city && p.city !== l.city ? el("span", { class: "pt-city" }, ` · ${p.city}`) : null)))) : null,
 
     scriptSection(l),
+    mailSection("lead", id, { to: l.email, name: l.contact_name, lead: l }),
     feedSection("leads", id, l.activities, () => openLead(id)),
   );
   showDrawer();
@@ -248,6 +251,7 @@ async function openDeal(id) {
         field("ИНН", "inn"), field("Контактное лицо", "contact_name"), field("Телефон", "phone", "tel"), field("Почта", "email", "email"),
         field("Следующее действие", "next_action"), field("Когда", "next_at", "date"))),
 
+    mailSection("deal", id, { to: d.email, name: d.contact_name }),
     feedSection("deals", id, d.activities, () => openDeal(id)),
   );
   showDrawer();
@@ -424,6 +428,7 @@ async function openCompany(id) {
       el("div", { class: "d-sub" }, "Когда дата подходит и открытой сделки нет — клиент попадает в «Пора заказывать» в шапке и на доске.")),
 
     el("div", { class: "d-section" }, el("h3", {}, "Заметка"), el("textarea", { class: "note", rows: 3, onchange: (e) => patch({ note: e.target.value }) }, c.note ?? "")),
+    mailSection("company", id, { to: c.email, name: c.contact_name }),
     feedSection("companies", id, c.activities, () => openCompany(id)),
   );
   showDrawer();
@@ -458,6 +463,103 @@ function showLogin() {
   document.body.append(form); login.focus();
 }
 
+/* ——— ПОЧТА ——— */
+let mailAccounts = null;
+const getAccounts = async () => mailAccounts ?? (mailAccounts = await api("/mail/accounts"));
+const fmtAddr = (a) => a?.name ? `${a.name} <${a.address}>` : a?.address || "";
+
+function mailSection(type, id, ctx = {}) {
+  const box = el("div", { class: "d-section mail" }, el("h3", {}, "Почта"));
+  (async () => {
+    const [msgs, accs] = await Promise.all([api(`/mail/for/${type}/${id}`), getAccounts()]);
+    const list = el("div", { class: "mail-list" }, msgs.length ? msgs.map((m) => mailRow(m)) : el("div", { class: "empty" }, accs.length ? "Переписки пока нет" : "Почта не подключена"));
+    const actions = el("div", { class: "d-actions" });
+    if (accs.length) {
+      actions.append(el("button", { class: "btn btn-sm btn-accent", onclick: () => composer(box, { type, id, to: ctx.to, name: ctx.name, lead: ctx.lead, accs }) }, ctx.to ? `✉ Написать ${ctx.to}` : "✉ Написать"));
+      const lastIn = msgs.find((m) => m.direction === "in");
+      if (lastIn) actions.append(el("button", { class: "btn btn-sm", onclick: () => composer(box, { type, id, to: lastIn.from_addr, replyTo: lastIn, accs, account: lastIn.account }) }, "↩ Ответить на последнее"));
+    }
+    box.append(actions, list);
+  })();
+  return box;
+}
+function mailRow(m) {
+  const who = m.direction === "in" ? (m.from_name || m.from_addr) : `→ ${m.to_addrs.map((t) => t.name || t.address).join(", ")}`;
+  return el("div", { class: `mail-row ${m.direction}` + (m.seen ? "" : " unread"), onclick: () => openMessage(m.id) },
+    el("div", { class: "mr-head" }, el("span", { class: "mr-who" }, who), el("span", { class: "mr-date" }, fmtDate(m.date), m.has_attachments ? " 📎" : "", el("span", { class: "mr-acc" }, ` · ${m.account}@`))),
+    el("div", { class: "mr-subj" }, m.subject || "(без темы)"), el("div", { class: "mr-snip" }, m.snippet));
+}
+async function openMessage(id) {
+  const m = await api(`/mail/messages/${id}`);
+  const accs = await getAccounts();
+  const modal = el("div", { class: "modal", onclick: (e) => { if (e.target === modal) modal.remove(); } },
+    el("div", { class: "modal-box" },
+      el("div", { class: "d-head" }, el("div", {}, el("h2", {}, m.subject || "(без темы)"), el("div", { class: "d-sub" }, `${m.direction === "in" ? "От" : "Кому"}: ${m.direction === "in" ? fmtAddr({ name: m.from_name, address: m.from_addr }) : m.to_addrs.map(fmtAddr).join(", ")} · ${fmtDate(m.date)} · ящик ${m.account}@`)),
+        el("button", { class: "btn btn-ghost d-close", onclick: () => modal.remove() }, "✕")),
+      m.attachments?.length ? el("div", { class: "atts" }, m.attachments.map((a) => el("a", { href: `/api/mail/attachments/${a.id}`, target: "_blank" }, `📎 ${a.filename} (${Math.round(a.size / 1024)} КБ)`))) : null,
+      el("pre", { class: "mail-body" }, m.text || "(пусто)"),
+      el("div", { class: "d-actions" },
+        m.direction === "in" && m.entity_type ? el("button", { class: "btn btn-accent btn-sm", onclick: () => { modal.remove(); const box = document.querySelector(".d-section.mail"); if (box) composer(box, { type: m.entity_type, id: m.entity_id, to: m.from_addr, replyTo: m, accs, account: m.account }); else location.hash = `${m.entity_type === "company" ? "companies" : m.entity_type + "s"}/${m.entity_id}`; } }, "↩ Ответить") : null,
+        m.entity_type ? el("a", { class: "btn btn-sm btn-ghost", href: `#${m.entity_type === "company" ? "companies" : m.entity_type + "s"}/${m.entity_id}`, onclick: () => modal.remove() }, `Открыть ${m.entity_type === "lead" ? "лид" : m.entity_type === "deal" ? "сделку" : "клиента"}`) : null)));
+  document.body.append(modal);
+}
+/* Форма письма: адресат, тема, текст (шаблон из скриптов при наличии лида), вложения-PDF, ящик */
+function composer(box, { type, id, to, name, lead, replyTo, accs, account }) {
+  box.querySelector(".composer")?.remove();
+  const accSel = el("select", {}, accs.map((a) => el("option", { value: a.key, selected: (account || (type === "lead" ? "dealers" : "sales")) === a.key ? "" : null }, a.address)));
+  const toIn = el("input", { value: to || "", placeholder: "кому@example.ru" });
+  const subjIn = el("input", { value: replyTo ? (/^re:/i.test(replyTo.subject) ? replyTo.subject : "Re: " + replyTo.subject) : "", placeholder: "Тема" });
+  const body = el("textarea", { rows: 10, placeholder: "Текст письма" });
+  if (lead && !replyTo) { const pitch = pitchFor(lead); const t = S().emails[0]; subjIn.value = fillTemplate(t.subject, lead, pitch); body.value = fillTemplate(t.body, lead, pitch); }
+  else if (replyTo) body.value = `\n\n${"—".repeat(20)}\n${fmtDate(replyTo.date)}, ${replyTo.from_name || replyTo.from_addr}:\n${(replyTo.snippet || "").split("\n").map((l) => "> " + l).join("\n")}`;
+  const tpl = lead ? el("select", { onchange: (e) => { const t = S().emails.find((x) => x.key === e.target.value); if (t) { const pitch = pitchFor(lead); subjIn.value = fillTemplate(t.subject, lead, pitch); body.value = fillTemplate(t.body, lead, pitch); } } }, el("option", { value: "" }, "Шаблон…"), S().emails.map((t) => el("option", { value: t.key }, t.title))) : null;
+  const files = [["svp-dealer-price.pdf", "прайс PDF"], ["svp-partner-deck.pdf", "презентация PDF"]].map(([f, l]) => { const cb = el("input", { type: "checkbox", value: f }); return el("label", { class: "field inline" }, cb, l); });
+  const err = el("div", { class: "login-err" });
+  const send = el("button", { class: "btn btn-accent btn-sm", onclick: async () => {
+    send.disabled = true; err.textContent = "";
+    try {
+      await api("/mail/send", { method: "POST", body: { account: accSel.value, to: toIn.value.trim(), subject: subjIn.value, text: body.value, in_reply_to: replyTo?.message_id, entity_type: type, entity_id: id, files: files.map((l) => l.querySelector("input")).filter((c) => c.checked).map((c) => c.value) } });
+      form.remove(); const drawer = location.hash.slice(1).split("/"); route();
+    } catch (e) { err.textContent = e.message; send.disabled = false; }
+  } }, "Отправить");
+  const form = el("div", { class: "composer" },
+    el("div", { class: "email-head" }, accSel, tpl, el("button", { class: "btn btn-sm btn-ghost", onclick: () => form.remove() }, "Отмена")),
+    el("div", { class: "fields" }, el("label", { class: "field" }, "Кому", toIn), el("label", { class: "field" }, "Тема", subjIn)),
+    body, el("div", { class: "email-head" }, ...files, send), err);
+  box.querySelector("h3").after(form); body.focus();
+}
+
+/* Раздел «Почта»: неразобранное + последние письма */
+async function renderMail() {
+  const [un, recent, accs] = await Promise.all([api("/mail/unassigned"), api("/mail/recent"), getAccounts()]);
+  const assignUI = (m) => {
+    const sel = el("input", { placeholder: "Компания, лид или сделка…", class: "assign-q" });
+    const res = el("div", { class: "assign-res" });
+    let t; sel.addEventListener("input", () => { clearTimeout(t); t = setTimeout(async () => {
+      const q = sel.value.trim(); if (q.length < 2) return res.replaceChildren();
+      const [cs, ls, ds] = await Promise.all([api("/companies?q=" + encodeURIComponent(q)), api("/leads?q=" + encodeURIComponent(q)), api("/deals")]);
+      const opts = [...cs.slice(0, 4).map((c) => ["company", c.id, `клиент · ${c.name}${c.city ? " · " + c.city : ""}`]), ...ls.slice(0, 4).map((l) => ["lead", l.id, `лид · ${l.company}${l.city ? " · " + l.city : ""}`]), ...ds.filter((d) => !d.outcome && d.title.toLowerCase().includes(q.toLowerCase())).slice(0, 3).map((d) => ["deal", d.id, `сделка · ${d.title}`])];
+      res.replaceChildren(...opts.map(([et, eid, label]) => el("button", { class: "btn btn-sm btn-ghost", onclick: async () => { await api(`/mail/messages/${m.id}/assign`, { method: "POST", body: { entity_type: et, entity_id: eid } }); renderMail(); refreshStats(); } }, label)));
+    }, 250); });
+    return el("div", { class: "assign" }, sel, res,
+      el("button", { class: "btn btn-sm", onclick: async () => { const r = await api(`/mail/messages/${m.id}/to-lead`, { method: "POST", body: {} }); location.hash = `leads/${r.id}`; } }, "+ Новый лид из письма"),
+      el("button", { class: "btn btn-sm btn-ghost", title: "Служебное письмо — убрать из неразобранного (все письма этого отправителя)", onclick: async () => { await api(`/mail/messages/${m.id}/dismiss`, { method: "POST", body: { all_from_sender: true } }); renderMail(); refreshStats(); } }, "Скрыть"));
+  };
+  $("#view").replaceChildren(
+    el("div", { class: "view-head" }, el("h1", {}, "Почта"), el("span", { class: "d-sub" }, accs.length ? `${accs.map((a) => a.address).join(", ")} · синхронизация каждую минуту` : "ящики не подключены"),
+      el("div", { class: "filters" }, el("button", { class: "btn btn-sm", onclick: async () => { await api("/mail/sync", { method: "POST" }); renderMail(); refreshStats(); } }, "Проверить сейчас"))),
+    el("div", { class: "mail-cols" },
+      el("div", { class: "col" }, el("div", { class: "col-head" }, el("b", {}, "Неразобранное"), el("span", {}, String(un.length))),
+        el("div", { class: "col-body" }, un.length ? un.map((m) => el("div", { class: "card mail-card" + (m.seen ? "" : " unread") },
+          el("div", { class: "card-title", onclick: () => openMessage(m.id), style: "cursor:pointer" }, el("span", {}, m.from_name || m.from_addr), el("span", { class: "mr-date" }, fmtDate(m.date))),
+          el("div", { class: "card-meta", onclick: () => openMessage(m.id), style: "cursor:pointer" }, el("b", {}, m.subject || "(без темы)"), " — ", m.snippet?.slice(0, 120)),
+          el("div", { class: "d-sub" }, `${m.from_addr} · ${m.account}@`), assignUI(m))) : el("div", { class: "empty" }, "Все письма разобраны"))),
+      el("div", { class: "col" }, el("div", { class: "col-head" }, el("b", {}, "Последние письма"), el("span", {}, String(recent.length))),
+        el("div", { class: "col-body" }, recent.map((m) => el("div", { class: `mail-row ${m.direction}` + (m.seen ? "" : " unread"), onclick: () => openMessage(m.id) },
+          el("div", { class: "mr-head" }, el("span", { class: "mr-who" }, m.direction === "in" ? (m.from_name || m.from_addr) : `→ ${m.to_addrs.map((t) => t.address).join(", ")}`), el("span", { class: "mr-date" }, fmtDate(m.date), el("span", { class: "mr-acc" }, ` · ${m.account}@`))),
+          el("div", { class: "mr-subj" }, m.subject || "(без темы)", m.entity_type === "ignored" ? el("span", { class: "tag" }, "скрыто") : m.entity_type ? el("span", { class: "tag" }, m.entity_type === "lead" ? "лид" : m.entity_type === "deal" ? "сделка" : "клиент") : el("span", { class: "tag warn" }, "не привязано"))))))));
+}
+
 /* ——— лента и комментарии ——— */
 function feedSection(entity, id, activities, reload) {
   const input = el("input", { placeholder: "Комментарий: что обсудили, что дальше…" });
@@ -466,7 +568,7 @@ function feedSection(entity, id, activities, reload) {
   return el("div", { class: "d-section" }, el("h3", {}, "Лента"),
     el("div", { class: "comment-form" }, input, el("button", { class: "btn btn-accent btn-sm", onclick: send }, "Отправить")),
     el("div", { class: "feed", style: "margin-top:10px" }, activities.length ? activities.map((a) =>
-      el("div", { class: `feed-item k-${a.kind}` }, a.text, el("div", { class: "feed-meta" }, `${a.author} · ${fmtDate(a.created_at)}`))) : el("div", { class: "empty" }, "Пока пусто")));
+      el("div", { class: `feed-item k-${a.kind}`, onclick: a.kind === "email" && a.meta ? () => openMessage(JSON.parse(a.meta).mail_id) : null, style: a.kind === "email" ? "cursor:pointer" : "" }, a.text, el("div", { class: "feed-meta" }, `${a.author} · ${fmtDate(a.created_at)}`))) : el("div", { class: "empty" }, "Пока пусто")));
 }
 
 /* ——— новый лид ——— */

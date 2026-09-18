@@ -22,6 +22,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const app = express();
 import { sessionMiddleware, usersRoutes, bootstrapAdmin } from "./auth.js";
 import { companiesRoutes } from "./companies.js";
+import { mailRoutes, startMailSync } from "./mail.js";
 
 /* За nginx/Railway — доверяем X-Forwarded-Proto для Secure-cookie */
 app.set("trust proxy", 1);
@@ -31,6 +32,7 @@ app.use(express.static(join(ROOT, "public")));
 bootstrapAdmin();
 usersRoutes(app);
 companiesRoutes(app);
+mailRoutes(app);
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 /* Снимок базы для переноса/бэкапа — только администратору. VACUUM INTO даёт согласованную копию при WAL. */
@@ -327,7 +329,9 @@ app.get("/api/stats", (_req, res) => {
   const reorder = db.prepare(`SELECT COUNT(*) n FROM companies WHERE status='active' AND next_order_at IS NOT NULL AND date(next_order_at) <= date('now', '+7 days')
     AND NOT EXISTS (SELECT 1 FROM deals d WHERE d.company_id = companies.id AND d.outcome IS NULL)`).get().n;
   const companies = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(total_amount),0) amount FROM companies WHERE status='active'`).get();
-  res.json({ leads, deals, due_today: today, reorder_due: reorder, companies });
+  const unassigned = db.prepare(`SELECT COUNT(*) n FROM mail_messages WHERE entity_type IS NULL AND direction = 'in'`).get().n;
+  const unread = db.prepare(`SELECT COUNT(*) n FROM mail_messages WHERE direction = 'in' AND seen = 0 AND entity_type IS NOT NULL`).get().n;
+  res.json({ leads, deals, due_today: today, reorder_due: reorder, companies, mail: { unassigned, unread } });
 });
 
 /* ——— точка входа для интеграций ———
@@ -352,4 +356,5 @@ app.post("/api/webhooks/:source", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`СВП CRM → http://localhost:${PORT}`);
+  startMailSync();
 });
