@@ -232,6 +232,8 @@ function addColumn(table, col, def) {
 addColumn("deals", "company_id", "INTEGER REFERENCES companies(id)");
 addColumn("leads", "company_id", "INTEGER");
 addColumn("deals", "closed_at", "TEXT");
+addColumn("leads", "inn", "TEXT");
+addColumn("leads", "vat", "TEXT");
 db.exec(`CREATE INDEX IF NOT EXISTS idx_deals_company ON deals(company_id)`);
 
 /* ——— утилиты ——— */

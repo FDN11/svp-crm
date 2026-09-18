@@ -138,7 +138,7 @@ app.patch("/api/leads/:id", (req, res) => {
   const lead = rowToLead(db.prepare(`SELECT * FROM leads WHERE id = ?`).get(id));
   if (!lead) return res.status(404).json({ error: "lead not found" });
   const b = req.body || {};
-  const allowed = ["company", "city", "region", "segment", "priority", "site", "email", "contact_name", "competitor", "next_action", "next_at", "source_note"];
+  const allowed = ["company", "city", "region", "segment", "priority", "site", "email", "contact_name", "competitor", "next_action", "next_at", "source_note", "inn", "vat"];
   const sets = []; const params = [];
   for (const k of allowed) if (k in b) { sets.push(`${k} = ?`); params.push(b[k]); }
   if ("phones" in b) { sets.push(`phones = ?`); params.push(JSON.stringify(b.phones)); }
@@ -168,6 +168,7 @@ app.post("/api/leads/:id/convert", (req, res) => {
   if (!lead) return res.status(404).json({ error: "lead not found" });
   if (lead.deal_id) return res.json(db.prepare(`SELECT * FROM deals WHERE id = ?`).get(lead.deal_id));
   const b = req.body || {};
+  b.inn = b.inn ?? lead.inn ?? null; b.vat = b.vat ?? lead.vat ?? "без НДС";
   let companyId = lead.company_id;
   if (!companyId) {
     // не плодим дубли: та же компания по ИНН или по названию+городу
@@ -197,10 +198,11 @@ app.post("/api/leads/:id/convert", (req, res) => {
 
 /* ——— сделки ——— */
 app.get("/api/deals", (req, res) => {
-  const { outcome } = req.query;
-  const where = outcome === "active" ? "WHERE outcome IS NULL" : outcome ? "WHERE outcome = ?" : "";
-  const params = outcome && outcome !== "active" ? [outcome] : [];
-  res.json(db.prepare(`SELECT * FROM deals ${where} ORDER BY updated_at DESC`).all(...params));
+  const { outcome, q } = req.query;
+  const where = []; const params = [];
+  if (outcome === "active") where.push("outcome IS NULL"); else if (outcome) { where.push("outcome = ?"); params.push(outcome); }
+  if (q) { where.push("(title LIKE ? OR company LIKE ? OR city LIKE ? OR inn LIKE ?)"); params.push(...Array(4).fill(`%${q}%`)); }
+  res.json(db.prepare(`SELECT * FROM deals ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY updated_at DESC`).all(...params));
 });
 
 app.get("/api/deals/:id", (req, res) => {
@@ -297,6 +299,28 @@ function addActivity(table, entity) {
   res.status(201).json(db.prepare(`SELECT * FROM activities WHERE entity_type=? AND entity_id=? ORDER BY id DESC LIMIT 1`).get(entity, id));
   };
 }
+/* Звонок с мобильного фиксируется руками: результат + комментарий; «перезвонить» ставит следующее касание */
+function logCall(table, entity) {
+  return (req, res) => {
+    const id = Number(req.params.id);
+    if (!db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(id)) return res.status(404).json({ error: "not found" });
+    const { result, comment, next_at } = req.body || {};
+    const RES = { reached: "Дозвонился", no_answer: "Не ответил", callback: "Перезвонить", wrong: "Неверный номер", busy: "Занято" };
+    if (!RES[result]) return res.status(400).json({ error: "bad result" });
+    log(entity, id, "call", `Звонок: ${RES[result]}${comment ? " — " + comment : ""}`, { result });
+    if (table !== "companies") {
+      if (result === "callback" || result === "no_answer") db.prepare(`UPDATE ${table} SET next_action = ?, next_at = ? WHERE id = ?`).run(result === "callback" ? "Перезвонить" : "Дозвониться", next_at || new Date(Date.now() + 86400000).toISOString().slice(0, 10), id);
+      if (table === "leads" && result === "reached") db.prepare(`UPDATE leads SET stage = CASE WHEN stage IN ('new','contacting') THEN 'contacted' ELSE stage END WHERE id = ?`).run(id);
+      if (table === "leads" && result === "wrong") db.prepare(`UPDATE leads SET source_note = COALESCE(source_note,'') || ' · номер неверный' WHERE id = ?`).run(id);
+    }
+    if (table === "leads" && result === "reached") stopRun(id, "дозвонились");
+    touch(table, id);
+    res.status(201).json({ ok: true });
+  };
+}
+app.post("/api/leads/:id/call", logCall("leads", "lead"));
+app.post("/api/deals/:id/call", logCall("deals", "deal"));
+app.post("/api/companies/:id/call", logCall("companies", "company"));
 app.post("/api/leads/:id/activities", addActivity("leads", "lead"));
 app.post("/api/deals/:id/activities", addActivity("deals", "deal"));
 app.post("/api/companies/:id/activities", addActivity("companies", "company"));

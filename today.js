@@ -17,6 +17,7 @@ export function todayRoutes(app) {
         CASE m.entity_type WHEN 'lead' THEN (SELECT company FROM leads WHERE id = m.entity_id) WHEN 'company' THEN (SELECT name FROM companies WHERE id = m.entity_id) ELSE (SELECT title FROM deals WHERE id = m.entity_id) END AS title
       FROM mail_messages m
       WHERE m.direction = 'in' AND m.entity_type IN ('lead','company','deal') AND m.date >= datetime('now', '-7 days')
+        AND m.subject NOT LIKE 'Заявка на дилерство СВП%'
         AND NOT EXISTS (SELECT 1 FROM mail_messages o WHERE o.direction = 'out' AND o.entity_type = m.entity_type AND o.entity_id = m.entity_id AND o.date > m.date)
       ORDER BY m.date DESC LIMIT 30`).all();
 

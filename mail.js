@@ -83,9 +83,9 @@ function leadFromSiteApplication(f, subject) {
   const ext = `site-${f.number}`;
   const existing = db.prepare(`SELECT id FROM leads WHERE ext_id = ?`).get(ext);
   if (existing) return existing.id;
-  const note = [`Заявка с сайта № ${f.number}`, f.inn ? `ИНН ${f.inn}` : null, f.vat || null, f.message ? `Сообщение: ${f.message}` : null].filter(Boolean).join(" · ");
-  const info = db.prepare(`INSERT INTO leads (ext_id, company, city, phones, email, contact_name, source, source_note, priority, stage) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-    .run(ext, f.company || f.name, f.region || null, JSON.stringify(f.phone ? [f.phone] : []), f.email || null, f.name || null, "site", note, "высокий", "new");
+  const note = [`Заявка с сайта № ${f.number}`, f.message ? `Сообщение: ${f.message}` : null].filter(Boolean).join(" · ");
+  const info = db.prepare(`INSERT INTO leads (ext_id, company, city, phones, email, contact_name, source, source_note, priority, stage, inn, vat) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(ext, f.company || f.name, f.region || null, JSON.stringify(f.phone ? [f.phone] : []), f.email || null, f.name || null, "site", note, "высокий", "new", f.inn || null, f.vat ? (/^с/i.test(f.vat) ? "с НДС" : "без НДС") : null);
   log("lead", info.lastInsertRowid, "system", `Заявка с сайта svpbrand.com № ${f.number}${f.vat ? " · " + f.vat : ""}`, { inn: f.inn, vat: f.vat }, "сайт");
   return info.lastInsertRowid;
 }
