@@ -9,6 +9,8 @@
 
 import express from "express";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { unlink } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   db, rowToLead, rowToCompany, touch, log, recalcDeal, recalcCompany,
@@ -30,6 +32,15 @@ bootstrapAdmin();
 usersRoutes(app);
 companiesRoutes(app);
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+/* Снимок базы для переноса/бэкапа — только администратору. VACUUM INTO даёт согласованную копию при WAL. */
+app.get("/api/admin/export.db", (req, res) => {
+  if (!req.user?.is_admin) return res.status(403).json({ error: "только для администратора" });
+  const tmp = join(tmpdir(), `svp-crm-export-${Date.now()}.db`);
+  db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+  res.setHeader("Content-Disposition", `attachment; filename="crm-${new Date().toISOString().slice(0, 10)}.db"`);
+  res.sendFile(tmp, (err) => { unlink(tmp, () => {}); if (err && !res.headersSent) res.status(500).end(); });
+});
 
 /* Вебхуки извне защищены отдельным токеном (CRM_WEBHOOK_TOKEN); без него — только локально */
 const WEBHOOK_TOKEN = process.env.CRM_WEBHOOK_TOKEN;

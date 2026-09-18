@@ -1,0 +1,19 @@
+[Unit]
+Description=SVP CRM
+After=network.target
+
+[Service]
+Type=simple
+User=svpcrm
+WorkingDirectory=/opt/svp-crm
+EnvironmentFile=/etc/svp-crm.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/svp-crm
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
