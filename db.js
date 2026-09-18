@@ -4,6 +4,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,10 +125,69 @@ CREATE TABLE IF NOT EXISTS activities (
   created_at  TEXT DEFAULT (datetime('now'))
 );
 
+/* Компания — постоянный клиент (дилер). Появляется при конвертации лида или вручную.
+   Сделки привязаны к компании; ритм заказов даёт напоминание «пора заказывать». */
+CREATE TABLE IF NOT EXISTS companies (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  legal_name    TEXT,                        -- ООО «…» / ИП …
+  inn           TEXT,
+  vat           TEXT DEFAULT 'без НДС',
+  city          TEXT,
+  region        TEXT,
+  segment       TEXT,
+  address       TEXT,                        -- адрес доставки
+  phones        TEXT DEFAULT '[]',
+  email         TEXT,
+  site          TEXT,
+  contact_name  TEXT,
+  contact_role  TEXT,
+  note          TEXT,
+  lead_id       INTEGER,                     -- из какого лида
+  status        TEXT DEFAULT 'active',       -- active | paused | lost
+  order_interval_days INTEGER,               -- ритм заказов; NULL = считаем по истории
+  last_order_at TEXT,
+  next_order_at TEXT,                        -- когда ждём следующий заказ
+  orders_count  INTEGER DEFAULT 0,
+  total_amount  REAL DEFAULT 0,
+  created_at    TEXT DEFAULT (datetime('now')),
+  updated_at    TEXT DEFAULT (datetime('now'))
+);
+
+/* Пользователи и сессии. Ролей пока нет — только «кто что сделал». */
+CREATE TABLE IF NOT EXISTS users (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  login      TEXT UNIQUE NOT NULL,
+  name       TEXT NOT NULL,
+  pass_hash  TEXT NOT NULL,
+  salt       TEXT NOT NULL,
+  is_admin   INTEGER DEFAULT 0,
+  active     INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now')),
+  last_seen  TEXT
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id         TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(stage, outcome);
+CREATE INDEX IF NOT EXISTS idx_companies_next ON companies(status, next_order_at);
 CREATE INDEX IF NOT EXISTS idx_deals_stage ON deals(stage, outcome);
 CREATE INDEX IF NOT EXISTS idx_activities_entity ON activities(entity_type, entity_id, created_at);
 `);
+
+/* Миграции колонок для баз, созданных до этой версии */
+function addColumn(table, col, def) {
+  const has = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn("deals", "company_id", "INTEGER REFERENCES companies(id)");
+addColumn("leads", "company_id", "INTEGER");
+addColumn("deals", "closed_at", "TEXT");
+db.exec(`CREATE INDEX IF NOT EXISTS idx_deals_company ON deals(company_id)`);
 
 /* ——— утилиты ——— */
 
@@ -144,7 +204,17 @@ export function touch(table, id) {
   db.prepare(`UPDATE ${table} SET updated_at = datetime('now') WHERE id = ?`).run(id);
 }
 
-export function log(entity_type, entity_id, kind, text, meta = null, author = "менеджер") {
+/* Текущий пользователь запроса — чтобы log() знал автора без передачи через все вызовы */
+export const requestContext = new AsyncLocalStorage();
+export const currentUser = () => requestContext.getStore()?.user ?? null;
+
+export function rowToCompany(r) {
+  if (!r) return null;
+  return { ...r, phones: parseJson(r.phones, []) };
+}
+
+export function log(entity_type, entity_id, kind, text, meta = null, author = null) {
+  author = author ?? currentUser()?.name ?? "система";
   db.prepare(
     `INSERT INTO activities (entity_type, entity_id, kind, text, meta, author) VALUES (?,?,?,?,?,?)`
   ).run(entity_type, entity_id, kind, text, meta ? JSON.stringify(meta) : null, author);
@@ -154,4 +224,25 @@ export function recalcDeal(dealId) {
   const { total } = db.prepare(`SELECT COALESCE(SUM(qty * price), 0) AS total FROM deal_items WHERE deal_id = ?`).get(dealId);
   db.prepare(`UPDATE deals SET amount = ?, updated_at = datetime('now') WHERE id = ?`).run(total, dealId);
   return total;
+}
+
+/* Итоги компании по выигранным сделкам + прогноз следующего заказа.
+   Интервал: заданный руками, иначе средний между последними заказами. */
+export function recalcCompany(companyId) {
+  const won = db.prepare(`SELECT id, amount, COALESCE(closed_at, updated_at) AS at FROM deals
+    WHERE company_id = ? AND outcome = 'won' ORDER BY at`).all(companyId);
+  const c = db.prepare(`SELECT order_interval_days FROM companies WHERE id = ?`).get(companyId);
+  if (!c) return null;
+  const last = won.at(-1)?.at ?? null;
+  let interval = c.order_interval_days;
+  if (!interval && won.length >= 2) {
+    const gaps = [];
+    for (let i = 1; i < won.length; i++) gaps.push((Date.parse(won[i].at) - Date.parse(won[i - 1].at)) / 86400000);
+    const recent = gaps.slice(-3);
+    interval = Math.max(7, Math.round(recent.reduce((a, b) => a + b, 0) / recent.length));
+  }
+  const next = last && interval ? new Date(Date.parse(last) + interval * 86400000).toISOString().slice(0, 10) : null;
+  db.prepare(`UPDATE companies SET orders_count = ?, total_amount = ?, last_order_at = ?, next_order_at = ?, updated_at = datetime('now') WHERE id = ?`)
+    .run(won.length, won.reduce((a, d) => a + (d.amount || 0), 0), last, next, companyId);
+  return { orders: won.length, last, next, interval };
 }

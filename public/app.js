@@ -20,6 +20,7 @@ const isDue = (iso) => iso && new Date(iso) <= new Date(new Date().toDateString(
 
 const api = async (path, opts = {}) => {
   const r = await fetch("/api" + path, { headers: { "Content-Type": "application/json" }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  if (r.status === 401 && !path.startsWith("/auth/")) { showLogin(); throw new Error("auth"); }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
   return r.json();
 };
@@ -37,7 +38,9 @@ async function route() {
   else if (view === "deals") await renderDeals();
   else if (view === "products") await renderProducts();
   else if (view === "scripts") renderScripts();
-  if (id) view === "leads" ? openLead(Number(id)) : view === "deals" ? openDeal(Number(id)) : null;
+  else if (view === "companies") await renderCompanies();
+  else if (view === "settings") await renderSettings();
+  if (id) view === "leads" ? openLead(Number(id)) : view === "deals" ? openDeal(Number(id)) : view === "companies" ? openCompany(Number(id)) : null;
   refreshStats();
 }
 
@@ -49,6 +52,8 @@ async function refreshStats() {
   $("#top-stats").innerHTML = `
     <span>Лидов в работе <b>${active}</b></span>
     <span>Сделок <b>${deals.reduce((a, r) => a + r.n, 0)}</b> на <b>${rub(amount)}</b></span>
+    <span>Клиентов <b>${s.companies?.n ?? 0}</b></span>
+    ${s.reorder_due ? `<a class="due" href="#companies">Пора заказывать <b>${s.reorder_due}</b></a>` : ""}
     ${s.due_today ? `<span class="due">Касаний сегодня <b>${s.due_today}</b></span>` : ""}`;
 }
 
@@ -123,8 +128,9 @@ async function openLead(id) {
 
     el("div", { class: "d-actions" },
       !l.deal_id
-        ? el("button", { class: "btn btn-accent", onclick: async () => { const d = await api(`/leads/${id}/convert`, { method: "POST", body: {} }); location.hash = `deals/${d.id}`; } }, "В сделку →")
+        ? el("button", { class: "btn btn-accent", title: "Создаст карточку клиента и первую сделку", onclick: async () => { const d = await api(`/leads/${id}/convert`, { method: "POST", body: {} }); location.hash = `deals/${d.id}`; } }, "В клиенты и сделку →")
         : el("a", { class: "btn btn-accent", href: `#deals/${l.deal_id}` }, `Сделка #${l.deal_id} →`),
+      l.company_id ? el("a", { class: "btn btn-sm btn-ghost", href: `#companies/${l.company_id}` }, "Карточка клиента") : null,
       ...S.LEAD_OUTCOMES.filter((o) => o.key !== "won").map((o) =>
         el("button", { class: "btn btn-sm" + (l.outcome === o.key ? " btn-ok" : ""), onclick: async () => { await patchLead(id, { outcome: l.outcome === o.key ? null : o.key }); openLead(id); } }, o.title))),
 
@@ -228,6 +234,7 @@ async function openDeal(id) {
     el("div", { class: "d-actions" },
       el("button", { class: "btn btn-sm" + (d.outcome === "won" ? " btn-ok" : ""), onclick: async () => { await patch({ outcome: d.outcome === "won" ? null : "won" }); openDeal(id); } }, "Выиграна"),
       el("button", { class: "btn btn-sm" + (d.outcome === "lost" ? " btn-bad" : ""), onclick: async () => { await patch({ outcome: d.outcome === "lost" ? null : "lost" }); openDeal(id); } }, "Проиграна"),
+      d.company_ref ? el("a", { class: "btn btn-sm btn-ghost", href: `#companies/${d.company_ref.id}` }, `Клиент: ${d.company_ref.name}`) : null,
       d.lead ? el("a", { class: "btn btn-sm btn-ghost", href: `#leads/${d.lead.id}` }, "← к лиду") : null),
 
     el("div", { class: "d-section items" }, el("h3", {}, "Товары"),
@@ -335,6 +342,122 @@ function renderScripts() {
       block("Вопросы заказчику до старта звонков", el("ol", { class: "qs" }, s.questions.map((q) => el("li", {}, q))))));
 }
 
+/* ——— КЛИЕНТЫ (компании) ——— */
+const daysUntil = (iso) => iso ? Math.round((new Date(iso) - new Date(new Date().toDateString())) / 86400000) : null;
+const dueLabel = (iso) => { const d = daysUntil(iso); if (d == null) return null; return d < 0 ? `просрочен на ${-d} дн.` : d === 0 ? "сегодня" : d <= 7 ? `через ${d} дн.` : fmtDay(iso); };
+
+async function renderCompanies() {
+  const params = new URLSearchParams(); if (state.q) params.set("q", state.q); if (state.cstatus) params.set("status", state.cstatus);
+  const rows = await api("/companies?" + params);
+  const due = rows.filter((c) => c.status === "active" && daysUntil(c.next_order_at) != null && daysUntil(c.next_order_at) <= 7 && !c.open_deals);
+  const head = el("div", { class: "view-head" }, el("h1", {}, "Клиенты"), el("span", { class: "d-sub" }, `${rows.length} компаний · ${rub(rows.reduce((a, c) => a + c.total_amount, 0))} за всё время`),
+    el("div", { class: "filters" }, select(["Все статусы", "active", "paused", "lost"], state.cstatus, (v) => { state.cstatus = v; renderCompanies(); }),
+      el("button", { class: "btn btn-sm", onclick: newCompany }, "+ Клиент")));
+  const card = (c) => el("div", { class: "card" + (due.includes(c) ? " p-high" : ""), onclick: () => openCompany(c.id) },
+    el("div", { class: "card-title" }, el("span", {}, c.name), c.status !== "active" ? el("span", { class: "chain" }, c.status === "paused" ? "пауза" : "потерян") : null),
+    el("div", { class: "card-meta" }, [c.city, c.segment, c.vat].filter(Boolean).join(" · ")),
+    el("div", { class: "card-foot" },
+      el("span", {}, c.orders_count ? `${c.orders_count} заказ${c.orders_count === 1 ? "" : c.orders_count < 5 ? "а" : "ов"} · ${rub(c.total_amount)}` : "заказов пока нет"),
+      c.open_deals ? el("span", { class: "amount" }, `в работе ${rub(c.open_amount)}`) : c.next_order_at ? el("span", { class: daysUntil(c.next_order_at) <= 7 ? "due" : "" }, `заказ ${dueLabel(c.next_order_at)}`) : null));
+  const table = el("div", { class: "companies" },
+    due.length ? el("div", { class: "col reorder" }, el("div", { class: "col-head" }, el("b", {}, "Пора заказывать"), el("span", {}, String(due.length))), el("div", { class: "col-body" }, due.map(card))) : null,
+    el("div", { class: "cgrid" }, rows.filter((c) => !due.includes(c)).map(card)));
+  $("#view").replaceChildren(head, table);
+}
+
+async function newCompany() {
+  const name = prompt("Название компании"); if (!name) return;
+  const city = prompt("Город") || null;
+  const c = await api("/companies", { method: "POST", body: { name, city } });
+  location.hash = `companies/${c.id}`; renderCompanies();
+}
+
+async function openCompany(id) {
+  const c = await api(`/companies/${id}`);
+  const S = state.meta;
+  const inner = $("#drawer-inner");
+  const refresh = () => { if (state.view === "companies") renderCompanies(); refreshStats(); };
+  const patch = (body) => api(`/companies/${id}`, { method: "PATCH", body }).then(refresh);
+  const field = (label, key, type = "text") => el("label", { class: "field" }, label, el("input", { type, value: c[key] ?? "", onchange: (e) => patch({ [key]: e.target.value }) }));
+  const lastWon = c.deals.find((d) => d.outcome === "won");
+  const openDeals = c.deals.filter((d) => !d.outcome);
+  const newDealBtn = (copyFrom, label, cls) => el("button", { class: cls, onclick: async () => { const d = await api(`/companies/${id}/deals`, { method: "POST", body: copyFrom ? { copy_from: copyFrom } : {} }); location.hash = `deals/${d.id}`; } }, label);
+
+  inner.replaceChildren(
+    el("div", { class: "d-head" },
+      el("div", {}, el("h2", {}, c.name), el("div", { class: "d-sub" }, [c.legal_name, c.city, c.segment].filter(Boolean).join(" · "))),
+      c.status !== "active" ? el("span", { class: "outcome-badge " + (c.status === "lost" ? "lost" : "nurture") }, c.status === "paused" ? "Пауза" : "Потерян") : null,
+      el("button", { class: "btn btn-ghost d-close", onclick: closeDrawer }, "✕")),
+
+    el("div", { class: "kpis" },
+      el("div", {}, el("b", {}, String(c.orders_count)), el("span", {}, "заказов")),
+      el("div", {}, el("b", {}, rub(c.total_amount)), el("span", {}, "за всё время")),
+      el("div", {}, el("b", {}, c.last_order_at ? fmtDay(c.last_order_at) : "—"), el("span", {}, "последний заказ")),
+      el("div", { class: daysUntil(c.next_order_at) != null && daysUntil(c.next_order_at) <= 7 ? "due" : "" }, el("b", {}, c.next_order_at ? dueLabel(c.next_order_at) : "—"), el("span", {}, "следующий ожидаем"))),
+
+    el("div", { class: "d-actions" },
+      lastWon ? newDealBtn(lastWon.id, "Повторить последний заказ", "btn btn-accent") : null,
+      newDealBtn(null, lastWon ? "+ Новая сделка" : "+ Первая сделка", lastWon ? "btn" : "btn btn-accent"),
+      c.lead ? el("a", { class: "btn btn-sm btn-ghost", href: `#leads/${c.lead.id}` }, "← лид") : null,
+      el("label", { class: "field inline" }, "Статус", select(["active", "paused", "lost"], c.status, (v) => patch({ status: v }).then(() => openCompany(id))))),
+
+    el("div", { class: "d-section" }, el("h3", {}, `Сделки · ${c.deals.length}`),
+      c.deals.length ? el("div", { class: "deal-list" }, c.deals.map((d) => el("a", { class: "deal-row" + (d.outcome ? " " + d.outcome : ""), href: `#deals/${d.id}` },
+        el("span", { class: "dr-title" }, d.title), el("span", { class: "dr-stage" }, d.outcome ? S.DEAL_OUTCOMES.find((o) => o.key === d.outcome)?.title : S.DEAL_STAGES.find((s) => s.key === d.stage)?.title),
+        el("span", { class: "dr-date" }, fmtDay(d.closed_at || d.created_at)), el("span", { class: "dr-amount" }, rub(d.amount))))) : el("div", { class: "empty" }, "Сделок пока нет")),
+
+    el("div", { class: "d-section" }, el("h3", {}, "Реквизиты и доставка"),
+      el("div", { class: "fields" },
+        field("Юр. название", "legal_name"), field("ИНН", "inn"),
+        el("label", { class: "field" }, "НДС", select(["без НДС", "с НДС"], c.vat, (v) => patch({ vat: v }))),
+        field("Город", "city"), el("label", { class: "field wide" }, "Адрес доставки", el("input", { value: c.address ?? "", onchange: (e) => patch({ address: e.target.value }) })))),
+
+    el("div", { class: "d-section" }, el("h3", {}, "Контакты"),
+      el("div", { class: "phones" }, c.phones.map((p) => el("a", { href: "tel:" + p.replace(/\D/g, "") }, p)), c.email ? el("a", { href: "mailto:" + c.email }, c.email) : null, c.site ? el("a", { href: c.site, target: "_blank", rel: "noopener" }, c.site.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")) : null),
+      el("div", { class: "fields", style: "margin-top:10px" }, field("Контактное лицо", "contact_name"), field("Должность", "contact_role"), field("Почта", "email", "email"),
+        el("label", { class: "field" }, "Телефоны (через запятую)", el("input", { value: c.phones.join(", "), onchange: (e) => patch({ phones: e.target.value.split(",").map((p) => p.trim()).filter(Boolean) }) })))),
+
+    el("div", { class: "d-section" }, el("h3", {}, "Ритм заказов"),
+      el("div", { class: "fields" },
+        el("label", { class: "field" }, "Интервал, дней (пусто — по истории)", el("input", { type: "number", min: 7, value: c.order_interval_days ?? "", onchange: (e) => patch({ order_interval_days: e.target.value ? Number(e.target.value) : null }).then(() => openCompany(id)) })),
+        el("label", { class: "field" }, "Следующий заказ ожидаем", el("input", { type: "date", value: c.next_order_at ?? "", onchange: (e) => patch({ next_order_at: e.target.value || null }) }))),
+      el("div", { class: "d-sub" }, "Когда дата подходит и открытой сделки нет — клиент попадает в «Пора заказывать» в шапке и на доске.")),
+
+    el("div", { class: "d-section" }, el("h3", {}, "Заметка"), el("textarea", { class: "note", rows: 3, onchange: (e) => patch({ note: e.target.value }) }, c.note ?? "")),
+    feedSection("companies", id, c.activities, () => openCompany(id)),
+  );
+  showDrawer();
+}
+
+/* ——— НАСТРОЙКИ: пользователи и пароль ——— */
+async function renderSettings() {
+  const me = state.meta.user; const users = await api("/users");
+  const row = (u) => el("tr", {}, el("td", {}, u.name, u.id === me.id ? el("span", { class: "d-sub" }, " (вы)") : null), el("td", {}, u.login), el("td", {}, u.is_admin ? "администратор" : "менеджер"), el("td", {}, u.last_seen ? fmtDate(u.last_seen) : "—"),
+    el("td", {}, me.is_admin && u.id !== me.id ? el("button", { class: "btn btn-sm btn-ghost", onclick: async () => { await api(`/users/${u.id}`, { method: "PATCH", body: { active: !u.active } }); renderSettings(); } }, u.active ? "Отключить" : "Включить") : null,
+      me.is_admin ? el("button", { class: "btn btn-sm btn-ghost", onclick: async () => { const p = prompt(`Новый пароль для ${u.login}`); if (p) { await api(`/users/${u.id}`, { method: "PATCH", body: { password: p } }); alert("Пароль изменён"); } } }, "Сменить пароль") : null));
+  const addForm = me.is_admin ? el("div", { class: "fields sig" },
+    el("label", { class: "field" }, "Логин", el("input", { id: "nu-login" })), el("label", { class: "field" }, "Имя", el("input", { id: "nu-name" })), el("label", { class: "field" }, "Пароль", el("input", { id: "nu-pass", type: "password" })),
+    el("label", { class: "field inline" }, el("input", { id: "nu-admin", type: "checkbox" }), " администратор"),
+    el("button", { class: "btn btn-accent", onclick: async () => { try { await api("/users", { method: "POST", body: { login: $("#nu-login").value, name: $("#nu-name").value, password: $("#nu-pass").value, is_admin: $("#nu-admin").checked ? 1 : 0 } }); renderSettings(); } catch (e) { alert(e.message); } } }, "Добавить")) : null;
+  const pwForm = el("div", { class: "fields sig" }, el("label", { class: "field" }, "Текущий пароль", el("input", { id: "pw-cur", type: "password" })), el("label", { class: "field" }, "Новый пароль", el("input", { id: "pw-new", type: "password" })),
+    el("button", { class: "btn", onclick: async () => { try { await api("/auth/password", { method: "POST", body: { current: $("#pw-cur").value, password: $("#pw-new").value } }); alert("Пароль изменён"); $("#pw-cur").value = $("#pw-new").value = ""; } catch (e) { alert(e.message); } } }, "Сменить"));
+  $("#view").replaceChildren(
+    el("div", { class: "view-head" }, el("h1", {}, "Настройки"), el("span", { class: "d-sub" }, `вы вошли как ${me.name}`), el("div", { class: "filters" }, el("button", { class: "btn btn-sm btn-ghost", onclick: async () => { await api("/auth/logout", { method: "POST" }); location.reload(); } }, "Выйти"))),
+    el("div", { class: "doc" },
+      el("section", { class: "doc-block" }, el("h2", {}, "Пользователи"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Имя"), el("th", {}, "Логин"), el("th", {}, "Роль"), el("th", {}, "Был в системе"), el("th", {}))), el("tbody", {}, users.map(row))), addForm),
+      el("section", { class: "doc-block" }, el("h2", {}, "Мой пароль"), pwForm),
+      el("section", { class: "doc-block" }, el("h2", {}, "Подпись в письмах"), el("div", { class: "d-sub" }, "Задаётся в разделе «Скрипты» — хранится в этом браузере."))));
+}
+
+/* ——— ВХОД ——— */
+function showLogin() {
+  if ($("#login")) return;
+  const login = el("input", { placeholder: "логин", autocomplete: "username" }), pass = el("input", { type: "password", placeholder: "пароль", autocomplete: "current-password" }), err = el("div", { class: "login-err" });
+  const submit = async (e) => { e?.preventDefault(); try { await api("/auth/login", { method: "POST", body: { login: login.value.trim(), password: pass.value } }); location.reload(); } catch (x) { err.textContent = x.message === "auth" ? "Неверный логин или пароль" : x.message; } };
+  const form = el("form", { id: "login", onsubmit: submit }, el("div", { class: "login-box" }, el("div", { class: "brand" }, el("span", { class: "mark" }, "СВП"), el("span", { class: "brand-sub" }, "CRM · дилерская сеть")), login, pass, err, el("button", { class: "btn btn-accent", type: "submit" }, "Войти")));
+  document.body.append(form); login.focus();
+}
+
 /* ——— лента и комментарии ——— */
 function feedSection(entity, id, activities, reload) {
   const input = el("input", { placeholder: "Комментарий: что обсудили, что дальше…" });
@@ -382,6 +505,7 @@ document.addEventListener("keydown", (e) => e.key === "Escape" && !$("#drawer").
 
 /* ——— старт ——— */
 (async () => {
-  [state.meta, state.products] = await Promise.all([api("/meta"), api("/products")]);
+  try { [state.meta, state.products] = await Promise.all([api("/meta"), api("/products")]); } catch { return; }
+  $("#user-name").textContent = state.meta.user?.name || "";
   route();
 })();

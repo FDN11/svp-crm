@@ -221,3 +221,40 @@ mark { background: rgb(224 178 74 / .18); color: var(--warn); padding: 0 3px; }
 .files a { color: var(--text); border-bottom: 1px solid var(--border-strong); }
 .files a:hover, .files-row a:hover { color: var(--accent); }
 .files-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+
+/* ——— клиенты ——— */
+.companies { display: flex; flex-direction: column; gap: 16px; }
+.companies .col.reorder { border-color: var(--accent); }
+.companies .col.reorder .col-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+.cgrid .card, .reorder .card { cursor: pointer; }
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.kpis > div { background: var(--bg); border: 1px solid var(--border); padding: 10px 12px; }
+.kpis b { display: block; font-size: 18px; font-weight: 500; letter-spacing: -.01em; }
+.kpis span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.kpis .due b { color: var(--warn); }
+.deal-list { display: flex; flex-direction: column; gap: 4px; }
+.deal-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; padding: 8px 10px; background: var(--bg); border-left: 2px solid var(--border-strong); font-size: 13px; align-items: center; }
+.deal-row:hover { border-left-color: var(--accent); }
+.deal-row.won { border-left-color: var(--ok); } .deal-row.lost { border-left-color: var(--bad); opacity: .7; }
+.dr-stage, .dr-date { color: var(--muted); font-size: 12px; }
+.dr-amount { color: var(--accent); font-weight: 500; font-variant-numeric: tabular-nums; }
+.field.inline { flex-direction: row; align-items: center; gap: 8px; }
+.field.inline select { padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); }
+textarea.note { width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 14px; resize: vertical; }
+.top .user { margin-left: 4px; color: var(--muted); font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); }
+.top .user:hover { color: var(--text); border-color: var(--accent); }
+.top-stats a.due:hover b { color: var(--accent); }
+
+/* ——— вход ——— */
+#login { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: grid; place-items: center; margin: 0; }
+.login-box { width: 320px; display: flex; flex-direction: column; gap: 10px; padding: 28px; background: var(--surface); border: 1px solid var(--border); }
+.login-box .brand { margin-bottom: 10px; }
+.login-box input { padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); color: var(--text); }
+.login-box .btn { justify-content: center; }
+.login-err { color: var(--bad); font-size: 13px; min-height: 16px; }
+/* шапка: статистика не переносится, при нехватке места ужимаем поиск и подпись бренда */
+.top-stats { flex: none; white-space: nowrap; }
+.top-stats > * { white-space: nowrap; }
+@media (max-width: 1500px) { .brand-sub { display: none; } .search input { width: 180px; } .top { gap: 14px; } }
+@media (max-width: 1250px) { .top-stats span:not(.due) { display: none; } }

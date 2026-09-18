@@ -11,26 +11,28 @@ import express from "express";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  db, rowToLead, touch, log, recalcDeal,
+  db, rowToLead, rowToCompany, touch, log, recalcDeal, recalcCompany,
   LEAD_STAGES, LEAD_OUTCOMES, DEAL_STAGES, DEAL_OUTCOMES,
 } from "./db.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 const app = express();
-/* Basic-auth для команды: задать CRM_USER и CRM_PASS в окружении.
-   Без них — открытый доступ (локальная разработка). */
-const AUTH_USER = process.env.CRM_USER, AUTH_PASS = process.env.CRM_PASS;
-if (AUTH_USER && AUTH_PASS) {
-  const expected = Buffer.from(`${AUTH_USER}:${AUTH_PASS}`).toString("base64");
-  app.use((req, res, next) => {
-    if (req.headers.authorization === `Basic ${expected}`) return next();
-    res.set("WWW-Authenticate", 'Basic realm="SVP CRM"').status(401).send("Требуется вход");
-  });
-}
+import { sessionMiddleware, usersRoutes, bootstrapAdmin } from "./auth.js";
+import { companiesRoutes } from "./companies.js";
 
+/* За nginx/Railway — доверяем X-Forwarded-Proto для Secure-cookie */
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "2mb" }));
+app.use(sessionMiddleware);
 app.use(express.static(join(ROOT, "public")));
+bootstrapAdmin();
+usersRoutes(app);
+companiesRoutes(app);
+app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+/* Вебхуки извне защищены отдельным токеном (CRM_WEBHOOK_TOKEN); без него — только локально */
+const WEBHOOK_TOKEN = process.env.CRM_WEBHOOK_TOKEN;
 
 const leadStageKeys = new Set(LEAD_STAGES.map((s) => s.key));
 const leadOutcomeKeys = new Set(LEAD_OUTCOMES.map((s) => s.key));
@@ -39,7 +41,7 @@ const dealOutcomeKeys = new Set(DEAL_OUTCOMES.map((s) => s.key));
 
 /* ——— справочники ——— */
 app.get("/api/meta", (_req, res) => {
-  res.json({ LEAD_STAGES, LEAD_OUTCOMES, DEAL_STAGES, DEAL_OUTCOMES });
+  res.json({ LEAD_STAGES, LEAD_OUTCOMES, DEAL_STAGES, DEAL_OUTCOMES, user: _req.user });
 });
 
 /* ——— лиды ——— */
@@ -138,17 +140,32 @@ app.patch("/api/leads/:id", (req, res) => {
   res.json(rowToLead(db.prepare(`SELECT * FROM leads WHERE id = ?`).get(id)));
 });
 
-/* лид → сделка */
+/* лид → компания + первая сделка. Если лид уже конвертирован — возвращаем его сделку. */
 app.post("/api/leads/:id/convert", (req, res) => {
   const id = Number(req.params.id);
   const lead = rowToLead(db.prepare(`SELECT * FROM leads WHERE id = ?`).get(id));
   if (!lead) return res.status(404).json({ error: "lead not found" });
   if (lead.deal_id) return res.json(db.prepare(`SELECT * FROM deals WHERE id = ?`).get(lead.deal_id));
   const b = req.body || {};
+  let companyId = lead.company_id;
+  if (!companyId) {
+    // не плодим дубли: та же компания по ИНН или по названию+городу
+    const existing = (b.inn && db.prepare(`SELECT id FROM companies WHERE inn = ?`).get(b.inn))
+      || db.prepare(`SELECT id FROM companies WHERE lower(name) = lower(?) AND COALESCE(city,'') = COALESCE(?, '')`).get(lead.company, lead.city);
+    if (existing) companyId = existing.id;
+    else {
+      const c = db.prepare(`INSERT INTO companies (name, inn, vat, city, region, segment, phones, email, site, contact_name, lead_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(lead.company, b.inn ?? null, b.vat ?? "без НДС", lead.city, lead.region, lead.segment,
+        JSON.stringify(lead.phones), lead.email, lead.site, lead.contact_name, id);
+      companyId = c.lastInsertRowid;
+      log("company", companyId, "system", `Компания создана из лида #${id}`);
+    }
+    db.prepare(`UPDATE leads SET company_id = ? WHERE id = ?`).run(companyId, id);
+  }
   const info = db.prepare(`
-    INSERT INTO deals (lead_id, title, company, city, vat, inn, contact_name, phone, email)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(
-    id, b.title || `${lead.company} — первая партия`, lead.company, lead.city,
+    INSERT INTO deals (lead_id, company_id, title, company, city, vat, inn, contact_name, phone, email)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+    id, companyId, b.title || `${lead.company} — первая партия`, lead.company, lead.city,
     b.vat ?? "без НДС", b.inn ?? null, lead.contact_name, lead.phones[0] ?? null, lead.email);
   const dealId = info.lastInsertRowid;
   db.prepare(`UPDATE leads SET outcome = 'won', deal_id = ?, updated_at = datetime('now') WHERE id = ?`).run(dealId, id);
@@ -171,14 +188,15 @@ app.get("/api/deals/:id", (req, res) => {
   deal.items = db.prepare(`SELECT * FROM deal_items WHERE deal_id = ? ORDER BY id`).all(deal.id);
   deal.activities = db.prepare(`SELECT * FROM activities WHERE entity_type='deal' AND entity_id=? ORDER BY created_at DESC, id DESC`).all(deal.id);
   deal.lead = deal.lead_id ? rowToLead(db.prepare(`SELECT * FROM leads WHERE id = ?`).get(deal.lead_id)) : null;
+  deal.company_ref = deal.company_id ? rowToCompany(db.prepare(`SELECT * FROM companies WHERE id = ?`).get(deal.company_id)) : null;
   res.json(deal);
 });
 
 app.post("/api/deals", (req, res) => {
   const b = req.body || {};
   if (!b.title && !b.company) return res.status(400).json({ error: "title or company required" });
-  const info = db.prepare(`INSERT INTO deals (title, company, city, vat, inn, contact_name, phone, email) VALUES (?,?,?,?,?,?,?,?)`)
-    .run(b.title || b.company, b.company ?? null, b.city ?? null, b.vat ?? "без НДС", b.inn ?? null, b.contact_name ?? null, b.phone ?? null, b.email ?? null);
+  const info = db.prepare(`INSERT INTO deals (title, company, company_id, city, vat, inn, contact_name, phone, email) VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(b.title || b.company, b.company ?? null, b.company_id ?? null, b.city ?? null, b.vat ?? "без НДС", b.inn ?? null, b.contact_name ?? null, b.phone ?? null, b.email ?? null);
   log("deal", info.lastInsertRowid, "system", "Сделка создана вручную");
   res.status(201).json(db.prepare(`SELECT * FROM deals WHERE id = ?`).get(info.lastInsertRowid));
 });
@@ -199,11 +217,14 @@ app.patch("/api/deals/:id", (req, res) => {
   if ("outcome" in b) {
     if (b.outcome !== null && !dealOutcomeKeys.has(b.outcome)) return res.status(400).json({ error: "bad outcome" });
     sets.push(`outcome = ?`); params.push(b.outcome);
+    sets.push(`closed_at = ?`); params.push(b.outcome ? new Date().toISOString().slice(0, 19).replace("T", " ") : null);
     log("deal", id, "stage", b.outcome ? `Исход: ${DEAL_OUTCOMES.find(s => s.key === b.outcome)?.title}` : "Возвращена в работу");
   }
+  if ("company_id" in b) { sets.push(`company_id = ?`); params.push(b.company_id); }
   if (!sets.length) return res.json(deal);
   sets.push(`updated_at = datetime('now')`);
   db.prepare(`UPDATE deals SET ${sets.join(", ")} WHERE id = ?`).run(...params, id);
+  if (deal.company_id) recalcCompany(deal.company_id);
   res.json(db.prepare(`SELECT * FROM deals WHERE id = ?`).get(id));
 });
 
@@ -250,13 +271,14 @@ function addActivity(table, entity) {
   if (!db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(id)) return res.status(404).json({ error: "not found" });
   const b = req.body || {};
   if (!b.text) return res.status(400).json({ error: "text required" });
-  log(entity, id, b.kind || "comment", b.text, b.meta ?? null, b.author ?? "менеджер");
+  log(entity, id, b.kind || "comment", b.text, b.meta ?? null);
   touch(table, id);
   res.status(201).json(db.prepare(`SELECT * FROM activities WHERE entity_type=? AND entity_id=? ORDER BY id DESC LIMIT 1`).get(entity, id));
   };
 }
 app.post("/api/leads/:id/activities", addActivity("leads", "lead"));
 app.post("/api/deals/:id/activities", addActivity("deals", "deal"));
+app.post("/api/companies/:id/activities", addActivity("companies", "company"));
 
 /* ——— товары ——— */
 /* Импорт/обновление справочника товаров из прайса сайта (upsert по sku) */
@@ -287,7 +309,10 @@ app.get("/api/stats", (_req, res) => {
   const leads = db.prepare(`SELECT stage, outcome, COUNT(*) n FROM leads GROUP BY stage, outcome`).all();
   const deals = db.prepare(`SELECT stage, outcome, COUNT(*) n, COALESCE(SUM(amount),0) amount FROM deals GROUP BY stage, outcome`).all();
   const today = db.prepare(`SELECT COUNT(*) n FROM leads WHERE outcome IS NULL AND next_at IS NOT NULL AND date(next_at) <= date('now')`).get().n;
-  res.json({ leads, deals, due_today: today });
+  const reorder = db.prepare(`SELECT COUNT(*) n FROM companies WHERE status='active' AND next_order_at IS NOT NULL AND date(next_order_at) <= date('now', '+7 days')
+    AND NOT EXISTS (SELECT 1 FROM deals d WHERE d.company_id = companies.id AND d.outcome IS NULL)`).get().n;
+  const companies = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(total_amount),0) amount FROM companies WHERE status='active'`).get();
+  res.json({ leads, deals, due_today: today, reorder_due: reorder, companies });
 });
 
 /* ——— точка входа для интеграций ———
@@ -295,6 +320,8 @@ app.get("/api/stats", (_req, res) => {
    в ленту по номеру телефона; конкретные провайдеры добавляются как адаптеры. */
 app.post("/api/webhooks/:source", (req, res) => {
   const { source } = req.params;
+  if (WEBHOOK_TOKEN && req.headers["x-webhook-token"] !== WEBHOOK_TOKEN && req.query.token !== WEBHOOK_TOKEN) return res.status(401).json({ error: "bad webhook token" });
+  if (!WEBHOOK_TOKEN && !req.user && !/^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(req.ip)) return res.status(401).json({ error: "webhook token not configured" });
   const b = req.body || {};
   const phone = (b.phone || b.from || "").replace(/\D/g, "").replace(/^8/, "7");
   let lead = null;
