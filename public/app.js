@@ -43,6 +43,7 @@ async function route() {
   else if (view === "settings") await renderSettings();
   else if (view === "mail") await renderMail();
   else if (view === "sequences") await renderSequences();
+  else if (view === "reports") await renderReports();
   if (id) view === "leads" ? openLead(Number(id)) : view === "deals" ? openDeal(Number(id)) : view === "companies" ? openCompany(Number(id)) : null;
   refreshStats();
 }
@@ -606,6 +607,82 @@ async function renderSequences() {
         s.queue.length ? el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Компания"), el("th", {}, "Город"), el("th", {}, "E-mail"), el("th", {}, "Шаг"), el("th", {}, "Следующее письмо"), el("th", {}))),
           el("tbody", {}, s.queue.map((q) => el("tr", {}, el("td", {}, el("a", { href: `#leads/${q.lead_id}` }, q.company)), el("td", {}, q.city || ""), el("td", {}, q.email), el("td", {}, `${q.step + 1} из 3`), el("td", {}, fmtDate(q.next_at)), el("td", {}, el("button", { class: "btn btn-sm btn-ghost", onclick: async () => { await api("/sequences/stop", { method: "POST", body: { lead_id: q.lead_id } }); renderSequences(); } }, "Стоп")))))) : el("div", { class: "empty" }, "Очередь пуста — запустите цепочку из карточки лида или кнопкой «В цепочку» над доской лидов"),
         el("div", { class: "d-sub", style: "margin-top:8px" }, `Всего: ${s.stats.map((x) => `${x.status} ${x.n}`).join(", ") || "—"}`))));
+}
+
+/* ——— ОТЧЁТЫ ——— */
+const rstate = { tab: "funnel", from: new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10), to: new Date().toISOString().slice(0, 10), entity: "deals", metric: "won_amount", rows: "month", cols: "", only_won: false };
+const num = (v, metric) => metric && /conv/.test(metric) ? `${v} %` : metric && /amount|avg/.test(metric) ? rub(v) : new Intl.NumberFormat("ru-RU").format(Math.round(v || 0));
+const bar = (v, max) => el("div", { class: "bar" }, el("i", { style: `width:${max ? Math.max(2, Math.round(100 * v / max)) : 0}%` }));
+function rtable(head, rows, opts = {}) {
+  return el("div", { class: "rt-wrap" }, el("table", { class: "rt" }, el("thead", {}, el("tr", {}, head.map((h, i) => el("th", { class: i ? "num" : "" }, h)))),
+    el("tbody", {}, rows.map((r) => el("tr", {}, r.map((c, i) => el("td", { class: i ? "num" : "" }, c)))))));
+}
+async function renderReports() {
+  const q = `from=${rstate.from}&to=${rstate.to}`;
+  const tabs = [["funnel", "Воронка"], ["sales", "Продажи"], ["clients", "Клиенты"], ["activity", "Активность"], ["pivot", "Сводная"]];
+  const periodUI = el("div", { class: "filters" },
+    el("label", { class: "field inline" }, "с", el("input", { type: "date", value: rstate.from, onchange: (e) => { rstate.from = e.target.value; renderReports(); } })),
+    el("label", { class: "field inline" }, "по", el("input", { type: "date", value: rstate.to, onchange: (e) => { rstate.to = e.target.value; renderReports(); } })),
+    ...[["30 дн", 30], ["90 дн", 90], ["год", 365]].map(([l, d]) => el("button", { class: "btn btn-sm btn-ghost", onclick: () => { rstate.to = new Date().toISOString().slice(0, 10); rstate.from = new Date(Date.now() - d * 86400000).toISOString().slice(0, 10); renderReports(); } }, l)));
+  const body = el("div", { class: "doc wide" });
+  $("#view").replaceChildren(el("div", { class: "view-head" }, el("h1", {}, "Отчёты"), el("div", { class: "tabs" }, tabs.map(([k, t]) => el("button", { class: "tab" + (rstate.tab === k ? " on" : ""), onclick: () => { rstate.tab = k; renderReports(); } }, t))), rstate.tab !== "clients" ? periodUI : null), body);
+  const S = state.meta;
+  if (rstate.tab === "funnel") {
+    const f = await api(`/reports/funnel?${q}`);
+    const max = Math.max(...f.bySource.map((b) => b.total), 1);
+    body.append(
+      el("section", { class: "doc-block" }, el("h2", {}, "Лиды по источникам за период"),
+        rtable(["Источник", "Всего", "Тронуто", "Контакт", "Квалиф.", "Сделка", "Догрев", "Отказ", "Конверсия"], f.bySource.map((b) => [el("div", {}, b.source, bar(b.total, max)), b.total, b.touched, b.contacted, b.qualified, el("b", { class: "acc" }, String(b.won)), b.nurture, b.lost, `${Math.round(100 * b.won / Math.max(b.total, 1))} %`])),
+        el("div", { class: "d-sub" }, `Среднее время от лида до сделки: ${f.avg_days_lead_to_deal ?? "—"} дн.`)),
+      el("div", { class: "two" },
+        el("section", { class: "doc-block" }, el("h2", {}, "Лиды сейчас по этапам"), el("div", { class: "kpis" }, f.stageNow.map((s) => el("div", {}, el("b", {}, String(s.n)), el("span", {}, s.title))))),
+        el("section", { class: "doc-block" }, el("h2", {}, "Сделки сейчас по этапам"), rtable(["Этап", "Сделок", "Сумма"], f.dealStages.map((s) => [s.title, s.n, rub(s.amount)])))));
+  } else if (rstate.tab === "sales") {
+    const f = await api(`/reports/sales?${q}`);
+    const maxM = Math.max(...f.byMonth.map((m) => m.amount), 1);
+    body.append(
+      el("div", { class: "kpis" }, el("div", {}, el("b", {}, String(f.totals.n)), el("span", {}, "выигранных сделок")), el("div", {}, el("b", { class: "acc" }, rub(f.totals.amount)), el("span", {}, "выручка")), el("div", {}, el("b", {}, rub(f.totals.avg)), el("span", {}, "средний чек"))),
+      el("section", { class: "doc-block" }, el("h2", {}, "По месяцам"), rtable(["Месяц", "Сделок", "Выручка", "из них новые клиенты"], f.byMonth.map((m) => [el("div", {}, m.m, bar(m.amount, maxM)), m.n, rub(m.amount), rub(m.new_amount)]))),
+      el("div", { class: "two" },
+        el("section", { class: "doc-block" }, el("h2", {}, "По городам"), rtable(["Город", "Сделок", "Выручка"], f.byCity.map((c) => [c.k, c.n, rub(c.amount)]))),
+        el("section", { class: "doc-block" }, el("h2", {}, "По группам товаров"), rtable(["Группа", "Штук", "Сумма"], f.byGroup.map((c) => [c.k, num(c.qty), rub(c.amount)])))),
+      el("section", { class: "doc-block" }, el("h2", {}, "Топ товаров"), rtable(["Товар", "Штук", "Сумма"], f.topProducts.map((c) => [c.k, num(c.qty), rub(c.amount)]))));
+  } else if (rstate.tab === "clients") {
+    const f = await api(`/reports/clients`);
+    body.append(
+      el("div", { class: "kpis" }, el("div", {}, el("b", {}, String(f.summary.n)), el("span", {}, "активных клиентов")), el("div", {}, el("b", {}, String(f.summary.repeat)), el("span", {}, "с повторными заказами")), el("div", {}, el("b", {}, rub(f.summary.avg_check)), el("span", {}, "средний заказ"))),
+      el("section", { class: "doc-block" }, el("h2", {}, "Топ по выручке"), rtable(["Клиент", "Город", "Заказов", "Сумма", "Последний", "Следующий"], f.top.map((c) => [el("a", { href: `#companies/${c.id}` }, c.name), c.city || "", c.orders_count, rub(c.total_amount), fmtDay(c.last_order_at), c.next_order_at ? dueLabel(c.next_order_at) : "—"]))),
+      el("section", { class: "doc-block" }, el("h2", {}, "Риск потери — просрочили свой ритм больше недели"), f.risk.length ? rtable(["Клиент", "Город", "Заказов", "Сумма", "Просрочка"], f.risk.map((c) => [el("a", { href: `#companies/${c.id}` }, c.name), c.city || "", c.orders_count, rub(c.total_amount), `${c.overdue} дн.`])) : el("div", { class: "empty small" }, "Никто не просрочил")));
+  } else if (rstate.tab === "activity") {
+    const f = await api(`/reports/activity?${q}`);
+    body.append(
+      el("div", { class: "kpis" }, el("div", {}, el("b", {}, String(f.mail.sent || 0)), el("span", {}, "писем отправлено")), el("div", {}, el("b", {}, String(f.mail.received || 0)), el("span", {}, "получено")), el("div", {}, el("b", {}, String(f.sequences.total)), el("span", {}, "лидов в цепочках")), el("div", {}, el("b", {}, `${f.sequences.replied} / ${f.sequences.said_no} / ${f.sequences.bounced}`), el("span", {}, "ответили / «нет» / отлуп"))),
+      el("div", { class: "two" },
+        el("section", { class: "doc-block" }, el("h2", {}, "По людям"), rtable(["Кто", "Всего", "Писем", "Комментариев", "Движений"], f.byAuthor.map((a) => [a.author, a.n, a.emails, a.comments, a.stages]))),
+        el("section", { class: "doc-block" }, el("h2", {}, "По дням"), rtable(["День", "Комм.", "Письма", "Звонки", "Этапы"], f.byDay.slice(-30).reverse().map((d) => [d.d, d.comments, d.emails, d.calls, d.stages])))));
+  } else {
+    const meta = await api("/reports/meta");
+    if (!meta.metrics[rstate.entity][rstate.metric]) rstate.metric = Object.keys(meta.metrics[rstate.entity])[0];
+    if (!meta.dims[rstate.entity][rstate.rows]) rstate.rows = Object.keys(meta.dims[rstate.entity])[0];
+    if (rstate.cols && !meta.dims[rstate.entity][rstate.cols]) rstate.cols = "";
+    const sel = (obj, val, key) => el("select", { onchange: (e) => { rstate[key] = e.target.value; renderReports(); } }, Object.entries(obj).map(([k, v]) => el("option", { value: k, selected: k === val ? "" : null }, v)));
+    const pq = `entity=${rstate.entity}&metric=${rstate.metric}&rows=${rstate.rows}${rstate.cols ? "&cols=" + rstate.cols : ""}&${q}${rstate.only_won ? "&only_won=1" : ""}`;
+    const p = await api(`/reports/pivot?${pq}`);
+    const multi = p.cols.length > 1;
+    body.append(
+      el("section", { class: "doc-block" }, el("h2", {}, "Конструктор"),
+        el("div", { class: "pivot-ctl" },
+          el("label", { class: "field" }, "Что", sel(meta.entities, rstate.entity, "entity")),
+          el("label", { class: "field" }, "Считаем", sel(meta.metrics[rstate.entity], rstate.metric, "metric")),
+          el("label", { class: "field" }, "Строки", sel(meta.dims[rstate.entity], rstate.rows, "rows")),
+          el("label", { class: "field" }, "Колонки", sel({ "": "—", ...meta.dims[rstate.entity] }, rstate.cols, "cols")),
+          rstate.entity === "deals" ? el("label", { class: "field inline" }, el("input", { type: "checkbox", checked: rstate.only_won ? "" : null, onchange: (e) => { rstate.only_won = e.target.checked; renderReports(); } }), " только выигранные") : null,
+          el("a", { class: "btn btn-sm", href: `/api/reports/pivot?${pq}&format=csv` }, "↓ CSV"))),
+      el("section", { class: "doc-block" }, el("h2", {}, `${meta.entities[rstate.entity]} · ${meta.metrics[rstate.entity][rstate.metric]} · по ${meta.dims[rstate.entity][rstate.rows]}${rstate.cols ? " × " + meta.dims[rstate.entity][rstate.cols] : ""}`),
+        p.table.length ? rtable([meta.dims[rstate.entity][rstate.rows], ...(multi ? p.cols : [meta.metrics[rstate.entity][rstate.metric]]), ...(multi ? ["итого"] : [])].concat([]),
+          [...p.table.map((r) => { const total = r.cells.reduce((a, b) => a + b, 0); const max = Math.max(...p.table.map((x) => x.cells.reduce((a, b) => a + b, 0)), 1); return [el("div", {}, r.key, bar(total, max)), ...r.cells.map((c) => num(c, rstate.metric)), ...(multi ? [el("b", {}, num(total, rstate.metric))] : [])]; }),
+            ...(p.totals[0] != null ? [[el("b", {}, "Итого"), ...p.totals.map((t) => el("b", {}, num(t, rstate.metric))), ...(multi ? [el("b", { class: "acc" }, num(p.totals.reduce((a, b) => a + b, 0), rstate.metric))] : [])]] : [])]) : el("div", { class: "empty small" }, "Нет данных за период")));
+  }
 }
 
 /* ——— лента и комментарии ——— */

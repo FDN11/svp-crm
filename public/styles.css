@@ -319,3 +319,22 @@ textarea.note { width: 100%; padding: 8px 10px; background: var(--bg); border: 1
 .top-stats { gap: 10px; }
 .top-stats a.due { padding: 3px 8px; border: 1px solid var(--warn); }
 @media (max-width: 1250px) { .top-stats span:not(.due) { display: inline; } }
+
+/* ——— отчёты ——— */
+.tabs { display: flex; gap: 2px; }
+.tab { padding: 7px 12px; background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+.tab.on { border-color: var(--accent); color: var(--text); background: var(--surface-2); }
+.doc.wide { max-width: 1400px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.rt-wrap { overflow-x: auto; }
+.rt { font-size: 13px; }
+.rt td, .rt th { padding: 7px 10px; }
+.rt td.num, .rt th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rt .acc, .kpis .acc { color: var(--accent); }
+.bar { height: 3px; background: var(--border); margin-top: 5px; width: 100%; max-width: 220px; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.pivot-ctl { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.pivot-ctl .field select { padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); min-width: 150px; }
+.pivot-ctl .field.inline { padding-bottom: 8px; }
+.kpis.k5 { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 1100px) { .two { grid-template-columns: 1fr; } .kpis { grid-template-columns: repeat(2, 1fr); } }

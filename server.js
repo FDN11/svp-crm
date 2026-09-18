@@ -25,6 +25,7 @@ import { companiesRoutes } from "./companies.js";
 import { mailRoutes, startMailSync } from "./mail.js";
 import { sequencesRoutes, startSequences, stopRun } from "./sequences.js";
 import { todayRoutes } from "./today.js";
+import { reportsRoutes } from "./reports.js";
 
 /* За nginx/Railway — доверяем X-Forwarded-Proto для Secure-cookie */
 app.set("trust proxy", 1);
@@ -37,6 +38,7 @@ companiesRoutes(app);
 mailRoutes(app);
 sequencesRoutes(app);
 todayRoutes(app);
+reportsRoutes(app);
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 /* Снимок базы для переноса/бэкапа — только администратору. VACUUM INTO даёт согласованную копию при WAL. */
