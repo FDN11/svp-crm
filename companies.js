@@ -99,7 +99,7 @@ export function companiesRoutes(app) {
       if (!c) {
         const lead = d.lead_id ? rowToLead(db.prepare(`SELECT * FROM leads WHERE id = ?`).get(d.lead_id)) : null;
         const info = db.prepare(`INSERT INTO companies (name, inn, vat, city, region, segment, phones, email, site, contact_name, lead_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-          .run(d.company, d.inn, d.vat, d.city, lead?.region ?? null, lead?.segment ?? null, JSON.stringify(lead?.phones ?? (d.phone ? [d.phone] : [])), d.email ?? lead?.email, lead?.site ?? null, d.contact_name, d.lead_id);
+          .run(d.company, d.inn ?? null, d.vat ?? "без НДС", d.city ?? null, lead?.region ?? null, lead?.segment ?? null, JSON.stringify(lead?.phones ?? (d.phone ? [d.phone] : [])), d.email ?? lead?.email ?? null, lead?.site ?? null, d.contact_name ?? null, d.lead_id ?? null);
         c = { id: info.lastInsertRowid }; created++;
         if (d.lead_id) db.prepare(`UPDATE leads SET company_id = ? WHERE id = ?`).run(c.id, d.lead_id);
       }
