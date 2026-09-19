@@ -269,6 +269,10 @@ async function openDeal(id) {
       callBtn("deals", id, d.phone, () => openDeal(id)),
       el("button", { class: "btn btn-sm" + (d.outcome === "won" ? " btn-ok" : ""), onclick: async () => { await patch({ outcome: d.outcome === "won" ? null : "won" }); openDeal(id); } }, "Выиграна"),
       el("button", { class: "btn btn-sm" + (d.outcome === "lost" ? " btn-bad" : ""), onclick: async () => { await patch({ outcome: d.outcome === "lost" ? null : "lost" }); openDeal(id); } }, "Проиграна"),
+      el("a", { class: "btn btn-sm", href: `/api/deals/${id}/kp`, target: "_blank", title: "Открыть КП на бланке — печать или сохранить в PDF" }, "📄 КП"),
+      d.items.length ? el("button", { class: "btn btn-sm", title: "Отправить КП клиенту письмом (с прайсом)", onclick: async () => {
+        const v = await quickForm("Отправить КП", [{ key: "to", label: "Кому", type: "email", value: d.email || d.company_ref?.email || "", required: true }, { key: "deck", label: "Приложить презентацию", options: ["нет", "да"] }], "Отправить");
+        if (!v) return; try { await api(`/deals/${id}/kp/send`, { method: "POST", body: { to: v.to, with_deck: v.deck === "да" } }); openDeal(id); refresh(); } catch (e) { alert(e.message); } } }, "✉ Отправить КП") : null,
       d.company_ref ? el("a", { class: "btn btn-sm btn-ghost", href: `#companies/${d.company_ref.id}` }, `Клиент: ${d.company_ref.name}`) : null,
       d.lead ? el("a", { class: "btn btn-sm btn-ghost", href: `#leads/${d.lead.id}` }, "← к лиду") : null),
 
@@ -309,14 +313,14 @@ async function renderProducts() {
 }
 
 /* ——— скрипты ——— */
-const S = () => window.SCRIPTS;
+const S = () => state.scripts || window.SCRIPTS;
 const cityLoc = (c) => !c ? "вашем городе" : c === "Ростов-на-Дону" ? "Ростове-на-Дону" : /ь$/.test(c) ? c.replace(/ь$/, "и") : /а$/.test(c) ? c.replace(/а$/, "е") : /[ыи]$/.test(c) ? c : c + "е";
 const signature = () => { const d = S().signature; let o = {}; try { o = JSON.parse(localStorage.getItem("svp.signature") || "{}"); } catch {} return { ...d, ...o }; };
 function pitchFor(lead) {
   const P = S().pitches;
   if (lead.source === "site" || lead.source === "email") return P.find((p) => p.inbound);
   if (lead.competitor) return P.find((p) => p.competitor);
-  return P.find((p) => p.match && p.match.test(lead.segment || "")) || P.find((p) => p.key === "store");
+  return P.find((p) => p.match && new RegExp(typeof p.match === "string" ? p.match : p.match.source, "i").test(lead.segment || "")) || P.find((p) => p.key === "store");
 }
 function fillTemplate(tpl, lead, pitch) {
   const sig = signature();
@@ -489,12 +493,40 @@ async function renderSettings() {
     el("button", { class: "btn btn-accent", onclick: async () => { try { await api("/users", { method: "POST", body: { login: $("#nu-login").value, name: $("#nu-name").value, password: $("#nu-pass").value, is_admin: $("#nu-admin").checked ? 1 : 0 } }); renderSettings(); } catch (e) { alert(e.message); } } }, "Добавить")) : null;
   const pwForm = el("div", { class: "fields sig" }, el("label", { class: "field" }, "Текущий пароль", el("input", { id: "pw-cur", type: "password" })), el("label", { class: "field" }, "Новый пароль", el("input", { id: "pw-new", type: "password" })),
     el("button", { class: "btn", onclick: async () => { try { await api("/auth/password", { method: "POST", body: { current: $("#pw-cur").value, password: $("#pw-new").value } }); alert("Пароль изменён"); $("#pw-cur").value = $("#pw-new").value = ""; } catch (e) { alert(e.message); } } }, "Сменить"));
+  const tg = await api("/telegram/status");
+  const tgBox = el("div", { class: "fields sig" });
+  if (!tg.enabled) tgBox.append(el("div", { class: "d-sub" }, "Бот не настроен: нужен TELEGRAM_BOT_TOKEN на сервере (создаётся у @BotFather за минуту)."));
+  else if (tg.linked) tgBox.append(el("div", {}, `✓ Telegram привязан. Сводка приходит в ${tg.digest_time} МСК по будням, команда /today — сводка сейчас.`), el("div", { class: "d-actions" }, el("button", { class: "btn btn-sm", onclick: async () => { const r = await api("/telegram/test", { method: "POST" }); alert(r.sent ? "Отправлено" : "Не удалось"); } }, "Прислать сводку сейчас"), el("button", { class: "btn btn-sm btn-ghost", onclick: async () => { await api("/telegram/unlink", { method: "POST" }); renderSettings(); } }, "Отвязать")));
+  else tgBox.append(el("div", { class: "d-sub" }, `Откройте бота${tg.bot ? " @" + tg.bot : ""} в Telegram и отправьте ему код:`), el("button", { class: "btn btn-sm", onclick: async (e) => { const r = await api("/telegram/link", { method: "POST" }); e.target.replaceWith(el("div", { class: "tg-code" }, r.code)); } }, "Получить код"));
   $("#view").replaceChildren(
     el("div", { class: "view-head" }, el("h1", {}, "Настройки"), el("span", { class: "d-sub" }, `вы вошли как ${me.name}`), el("div", { class: "filters" }, el("button", { class: "btn btn-sm btn-ghost", onclick: async () => { await api("/auth/logout", { method: "POST" }); location.reload(); } }, "Выйти"))),
     el("div", { class: "doc" },
       el("section", { class: "doc-block" }, el("h2", {}, "Пользователи"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Имя"), el("th", {}, "Логин"), el("th", {}, "Роль"), el("th", {}, "Был в системе"), el("th", {}))), el("tbody", {}, users.map(row))), addForm),
+      el("section", { class: "doc-block" }, el("h2", {}, "Telegram — утренняя сводка"), tgBox),
       el("section", { class: "doc-block" }, el("h2", {}, "Мой пароль"), pwForm),
-      el("section", { class: "doc-block" }, el("h2", {}, "Подпись в письмах"), el("div", { class: "d-sub" }, "Задаётся в разделе «Скрипты» — хранится в этом браузере."))));
+      me.is_admin ? el("section", { class: "doc-block" }, el("h2", {}, "Скрипты и шаблоны писем"), scriptsEditor()) : null));
+}
+
+/* ——— редактор скриптов: правит state.scripts и сохраняет целиком ——— */
+function scriptsEditor() {
+  const sc = JSON.parse(JSON.stringify(S()));
+  const status = el("div", { class: "d-sub" }, sc._custom ? "Тексты изменены в интерфейсе (файл по умолчанию не используется)." : "Используются тексты по умолчанию из файла.");
+  const save = async () => { delete sc._custom; try { await api("/scripts", { method: "PUT", body: sc }); state.scripts = await api("/scripts"); status.textContent = "Сохранено " + new Date().toLocaleTimeString("ru-RU"); } catch (e) { alert(e.message); } };
+  const ta = (obj, key, rows = 3) => el("textarea", { rows, class: "ed", onchange: (e) => { obj[key] = e.target.value; } }, obj[key] ?? "");
+  const inp = (obj, key, ph = "") => el("input", { class: "ed", value: obj[key] ?? "", placeholder: ph, onchange: (e) => { obj[key] = e.target.value; } });
+  const list = (title, arr, render, blank) => {
+    const box = el("div", { class: "ed-list" });
+    const draw = () => box.replaceChildren(...arr.map((item, i) => el("div", { class: "ed-item" }, render(item), el("button", { class: "btn btn-sm btn-ghost del", title: "Удалить", onclick: () => { arr.splice(i, 1); draw(); } }, "✕"))), el("button", { class: "btn btn-sm btn-ghost", onclick: () => { arr.push(blank()); draw(); } }, "+ добавить"));
+    draw();
+    return el("details", { class: "ed-sec" }, el("summary", {}, `${title} · ${arr.length}`), box);
+  };
+  return el("div", { class: "editor" }, status,
+    list("Заходы по сегментам", sc.pitches, (p) => el("div", { class: "fields" }, el("label", { class: "field" }, "Название", inp(p, "title")), el("label", { class: "field" }, "Сегмент (регулярное выражение) / особые: inbound, competitor", inp(p, "match", "салон|плитк")), el("label", { class: "field wide" }, "Боль клиента", inp(p, "pain")), el("label", { class: "field wide" }, "Текст захода в звонке", ta(p, "text", 4)), el("label", { class: "field wide" }, "Акценты (через ;)", el("input", { class: "ed", value: (p.accents || []).join("; "), onchange: (e) => { p.accents = e.target.value.split(";").map((x) => x.trim()).filter(Boolean); } })), el("label", { class: "field wide" }, "Абзац для письма {{segmentParagraph}}", ta(p, "email", 3))), () => ({ key: "p" + Date.now(), title: "Новый заход", match: "", pain: "", text: "", accents: [], email: "" })),
+    list("Шаблоны писем", sc.emails, (t) => el("div", { class: "fields" }, el("label", { class: "field" }, "Название", inp(t, "title")), el("label", { class: "field" }, "Ключ (first / follow / samples — для цепочки)", inp(t, "key")), el("label", { class: "field wide" }, "Тема", inp(t, "subject")), el("label", { class: "field wide" }, "Текст — подстановки: {{company}} {{city}} {{cityLoc}} {{name}} {{nameComma}} {{nameOrHello}} {{competitor}} {{segmentParagraph}} {{manager}} {{phone}} {{email}}", ta(t, "body", 10))), () => ({ key: "t" + Date.now(), title: "Новое письмо", subject: "", body: "" })),
+    list("Возражения", sc.objections, (o) => el("div", { class: "fields" }, el("label", { class: "field" }, "Возражение", inp(o, 0)), el("label", { class: "field" }, "Ответ", ta(o, 1, 2))), () => ["«…»", ""]),
+    list("Факты о компании", sc.facts, (f) => el("div", { class: "fields" }, el("label", { class: "field" }, "Тема", inp(f, 0)), el("label", { class: "field" }, "Текст", ta(f, 1, 2))), () => ["", ""]),
+    list("Структура звонка", sc.call, (f) => el("div", { class: "fields" }, el("label", { class: "field" }, "Шаг", inp(f, 0)), el("label", { class: "field" }, "Что говорим", ta(f, 1, 2))), () => ["", ""]),
+    el("div", { class: "d-actions" }, el("button", { class: "btn btn-accent", onclick: save }, "Сохранить тексты"), el("button", { class: "btn btn-ghost btn-sm", onclick: async () => { if (confirm("Вернуть тексты по умолчанию из файла?")) { await api("/scripts/reset", { method: "POST" }); state.scripts = await api("/scripts"); renderSettings(); } } }, "Сбросить к файлу")));
 }
 
 /* ——— ВХОД ——— */
@@ -807,7 +839,7 @@ document.addEventListener("keydown", (e) => e.key === "Escape" && !$("#drawer").
 
 /* ——— старт ——— */
 (async () => {
-  try { [state.meta, state.products, mailAccounts] = await Promise.all([api("/meta"), api("/products"), api("/mail/accounts")]); } catch { return; }
+  try { [state.meta, state.products, mailAccounts, state.scripts] = await Promise.all([api("/meta"), api("/products"), api("/mail/accounts"), api("/scripts")]); } catch { return; }
   $("#user-name").textContent = state.meta.user?.name || "";
   state.mine = localStorage.getItem("svp.mine") === "1";
   route();

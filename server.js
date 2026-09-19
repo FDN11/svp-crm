@@ -26,6 +26,10 @@ import { mailRoutes, startMailSync } from "./mail.js";
 import { sequencesRoutes, startSequences, stopRun } from "./sequences.js";
 import { todayRoutes } from "./today.js";
 import { reportsRoutes } from "./reports.js";
+import { kpRoutes } from "./kp.js";
+import { scriptsRoutes, getScripts } from "./scripts.js";
+import { useScriptsLoader } from "./sequences.js";
+import { telegramRoutes, startTelegram } from "./telegram.js";
 
 /* За nginx/Railway — доверяем X-Forwarded-Proto для Secure-cookie */
 app.set("trust proxy", 1);
@@ -39,6 +43,9 @@ mailRoutes(app);
 sequencesRoutes(app);
 todayRoutes(app);
 reportsRoutes(app);
+kpRoutes(app);
+scriptsRoutes(app); useScriptsLoader(getScripts);
+telegramRoutes(app);
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 /* Снимок базы для переноса/бэкапа — только администратору. VACUUM INTO даёт согласованную копию при WAL. */
@@ -397,4 +404,5 @@ app.listen(PORT, () => {
   console.log(`СВП CRM → http://localhost:${PORT}`);
   startMailSync();
   startSequences();
+  startTelegram();
 });

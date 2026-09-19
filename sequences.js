@@ -40,7 +40,10 @@ export const setSetting = (k, v) => db.prepare(`INSERT INTO settings (key, value
 export const SEQUENCES = {
   cold: { title: "Холодный заход", steps: [{ template: "first", delay: 0 }, { template: "follow", delay: 4 }, { template: "samples", delay: 7 }] },
 };
+let _getScripts = null;
+export const useScriptsLoader = (fn) => { _getScripts = fn; };
 function loadScripts() {
+  if (_getScripts) return _getScripts();
   const src = readFileSync(join(ROOT, "public", "scripts-data.js"), "utf8");
   const ctx = { window: {} }; vm.runInNewContext(src, ctx); return ctx.window.SCRIPTS;
 }
@@ -48,7 +51,7 @@ const cityLoc = (c) => !c ? "вашем городе" : c === "Ростов-на
 export function renderTemplate(templateKey, lead) {
   const S = loadScripts();
   const t = S.emails.find((e) => e.key === templateKey); if (!t) throw new Error("template " + templateKey);
-  const pitch = lead.competitor ? S.pitches.find((p) => p.competitor) : (S.pitches.find((p) => p.match && new RegExp(p.match.source, "i").test(lead.segment || "")) || S.pitches.find((p) => p.key === "store"));
+  const pitch = (lead.source === "site" || lead.source === "email") ? S.pitches.find((p) => p.inbound) : lead.competitor ? S.pitches.find((p) => p.competitor) : (S.pitches.find((p) => p.match && new RegExp(typeof p.match === "string" ? p.match : p.match.source, "i").test(lead.segment || "")) || S.pitches.find((p) => p.key === "store"));
   const sig = { ...S.signature, manager: getSetting("seq_signature_name") || S.signature.manager, phone: getSetting("seq_signature_phone") || S.signature.phone, email: getSetting("seq_account") + "@svpbrand.com" };
   const name = (lead.contact_name || "").trim();
   const map = { company: lead.company, city: lead.city || "", cityLoc: cityLoc(lead.city), name, nameComma: name ? ", " + name : "", nameOrHello: name || "Здравствуйте",

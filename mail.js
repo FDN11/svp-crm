@@ -195,7 +195,7 @@ export async function sendMail({ accountKey, to, cc, subject, text, inReplyTo, e
     if (parent) { headers["In-Reply-To"] = parent.message_id; refs = [...parent.refs, parent.message_id].slice(-20); headers["References"] = refs.join(" "); if (!subject) subject = /^re:/i.test(parent.subject) ? parent.subject : `Re: ${parent.subject}`; }
   }
   const transporter = nodemailer.createTransport({ host: SMTP_HOST, port: 465, secure: true, auth: { user: acc.address, pass: acc.password } });
-  const mail = { from: { name: fromName, address: acc.address }, to, cc: cc || undefined, subject, text, headers, attachments: attachments.map((a) => ({ filename: a.filename, path: a.path, contentType: a.contentType })) };
+  const mail = { from: { name: fromName, address: acc.address }, to, cc: cc || undefined, subject, text, headers, attachments: attachments.map((a) => ({ filename: a.filename, path: a.path, content: a.content, contentType: a.contentType })) };
   const info = await transporter.sendMail(mail);
   // копия в «Отправленные» — Beget SMTP сам её не кладёт
   const raw = await new Promise((res, rej) => nodemailer.createTransport({ streamTransport: true, buffer: true }).sendMail({ ...mail, messageId: info.messageId }, (e, i) => e ? rej(e) : res(i.message)));

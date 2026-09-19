@@ -364,3 +364,12 @@ textarea.note { width: 100%; padding: 8px 10px; background: var(--bg); border: 1
 .tb-row:hover .tb-quick { opacity: 1; }
 .tb-quick .btn { padding: 3px 7px; font-size: 12px; }
 .owner-sel { padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 14px; }
+
+/* редактор скриптов */
+.editor { display: flex; flex-direction: column; gap: 10px; }
+.ed-sec summary { cursor: pointer; padding: 8px 0; color: var(--text); font-weight: 500; }
+.ed-list { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 6px 12px; border-left: 2px solid var(--border); }
+.ed-item { position: relative; padding: 10px 40px 10px 12px; background: var(--surface); border: 1px solid var(--border); }
+.ed-item .del { position: absolute; top: 6px; right: 6px; }
+.ed { width: 100%; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 13px; line-height: 1.45; resize: vertical; }
+.tg-code { font-size: 28px; font-weight: 600; letter-spacing: .15em; color: var(--accent); padding: 8px 0; }

@@ -7,8 +7,12 @@ import { db, rowToLead, rowToCompany } from "./db.js";
 
 const STALE_DAYS = 7;
 
-export function todayRoutes(app) {
-  app.get("/api/today", (req, res) => {
+/* Сборка очереди: userId — для «моих» и счётчика; mine — только мои */
+export function buildToday(user, mine) {
+  { const req = { user, query: { scope: mine ? "mine" : "" } }; const res = { json: (v) => v }; return handler(req, res); }
+}
+function handler(req, res) {
+  {
     const mine = req.query.scope === "mine"; const uid = req.user?.id;
     const own = (alias) => mine ? ` AND ${alias}owner_id = ${Number(uid)}` : "";
     const unassigned = db.prepare(`SELECT id, account, from_addr, from_name, subject, snippet, date FROM mail_messages WHERE entity_type IS NULL AND direction = 'in' ORDER BY date DESC LIMIT 20`).all();
@@ -48,6 +52,7 @@ export function todayRoutes(app) {
     const won_today = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(amount),0) amount FROM deals WHERE outcome = 'won' AND date(closed_at) = date('now')`).get();
     const seq = db.prepare(`SELECT COUNT(*) n FROM activities WHERE kind = 'email' AND author = 'цепочка' AND date(created_at) = date('now')`).get().n;
 
-    res.json({ unassigned, replied, touches, reorder, stale, fresh, done: { comments: doneMap.comment || 0, emails: doneMap.email || 0, calls: doneMap.call || 0, stages: doneMap.stage || 0, won: won_today, sequence_sent: seq } });
-  });
+    return res.json({ unassigned, replied, touches, reorder, stale, fresh, done: { comments: doneMap.comment || 0, emails: doneMap.email || 0, calls: doneMap.call || 0, stages: doneMap.stage || 0, won: won_today, sequence_sent: seq } });
+  }
 }
+export function todayRoutes(app) { app.get("/api/today", handler); }
