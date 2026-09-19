@@ -157,7 +157,8 @@ async function openLead(id) {
       l.company_id ? el("a", { class: "btn btn-sm btn-ghost", href: `#companies/${l.company_id}` }, "Карточка клиента") : null,
       !l.outcome && l.email ? el("button", { class: "btn btn-sm btn-ghost", title: "3 письма: заход → напоминание через 4 дня → «как образцы» через 7. Остановится сама при ответе", onclick: async () => { const r = await api("/sequences/start", { method: "POST", body: { lead_ids: [id] } }); alert(r.started ? "Лид в цепочке — первое письмо уйдёт в ближайшее рабочее окно" : "Не запущено: " + r.skipped[0]?.reason); openLead(id); } }, "▶ В цепочку писем") : null,
       ...S.LEAD_OUTCOMES.filter((o) => o.key !== "won").map((o) =>
-        el("button", { class: "btn btn-sm" + (l.outcome === o.key ? " btn-ok" : ""), onclick: async () => { await patchLead(id, { outcome: l.outcome === o.key ? null : o.key }); openLead(id); } }, o.title))),
+        el("button", { class: "btn btn-sm" + (l.outcome === o.key ? " btn-ok" : ""), onclick: async () => { await patchLead(id, { outcome: l.outcome === o.key ? null : o.key }); openLead(id); } }, o.title)),
+      deleteBtn("leads", id, `лид «${l.company}»`)),
 
     el("div", { class: "d-section" }, el("h3", {}, "Контакты"),
       el("div", { class: "phones" }, l.phones.map((p) => el("a", { href: "tel:" + p.replace(/\D/g, "") }, p)), l.site ? el("a", { href: l.site, target: "_blank", rel: "noopener" }, l.site.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")) : null),
@@ -274,7 +275,8 @@ async function openDeal(id) {
         const v = await quickForm("Отправить КП", [{ key: "to", label: "Кому", type: "email", value: d.email || d.company_ref?.email || "", required: true }, { key: "deck", label: "Приложить презентацию", options: ["нет", "да"] }], "Отправить");
         if (!v) return; try { await api(`/deals/${id}/kp/send`, { method: "POST", body: { to: v.to, with_deck: v.deck === "да" } }); openDeal(id); refresh(); } catch (e) { alert(e.message); } } }, "✉ Отправить КП") : null,
       d.company_ref ? el("a", { class: "btn btn-sm btn-ghost", href: `#companies/${d.company_ref.id}` }, `Клиент: ${d.company_ref.name}`) : null,
-      d.lead ? el("a", { class: "btn btn-sm btn-ghost", href: `#leads/${d.lead.id}` }, "← к лиду") : null),
+      d.lead ? el("a", { class: "btn btn-sm btn-ghost", href: `#leads/${d.lead.id}` }, "← к лиду") : null,
+      deleteBtn("deals", id, `сделку «${d.title}»`)),
 
     el("div", { class: "d-section items" }, el("h3", {}, "Товары"),
       d.items.length ? itemsTable : el("div", { class: "empty" }, "Позиций пока нет"),
@@ -448,7 +450,8 @@ async function openCompany(id) {
       lastWon ? newDealBtn(lastWon.id, "Повторить последний заказ", "btn btn-accent") : null,
       newDealBtn(null, lastWon ? "+ Новая сделка" : "+ Первая сделка", lastWon ? "btn" : "btn btn-accent"),
       c.lead ? el("a", { class: "btn btn-sm btn-ghost", href: `#leads/${c.lead.id}` }, "← лид") : null,
-      el("label", { class: "field inline" }, "Статус", select(["active", "paused", "lost"], c.status, (v) => patch({ status: v }).then(() => openCompany(id))))),
+      el("label", { class: "field inline" }, "Статус", select(["active", "paused", "lost"], c.status, (v) => patch({ status: v }).then(() => openCompany(id)))),
+      deleteBtn("companies", id, `клиента «${c.name}» со всеми его сделками`)),
 
     el("div", { class: "d-section" }, el("h3", {}, `Сделки · ${c.deals.length}`),
       c.deals.length ? el("div", { class: "deal-list" }, c.deals.map((d) => el("a", { class: "deal-row" + (d.outcome ? " " + d.outcome : ""), href: `#deals/${d.id}` },
@@ -761,6 +764,12 @@ async function renderReports() {
             ...(p.totals[0] != null ? [[el("b", {}, "Итого"), ...p.totals.map((t) => el("b", {}, num(t, rstate.metric))), ...(multi ? [el("b", { class: "acc" }, num(p.totals.reduce((a, b) => a + b, 0), rstate.metric))] : [])]] : [])]) : el("div", { class: "empty small" }, "Нет данных за период")));
   }
 }
+
+/* ——— удаление (администратор) ——— */
+const deleteBtn = (entity, id, label, after) => state.meta.user?.is_admin ? el("button", { class: "btn btn-sm btn-ghost del-entity", title: "Удалить безвозвратно", onclick: async () => {
+  if (!confirm(`Удалить ${label}? Лента и привязки будут удалены, письма останутся в разделе «Почта» как неразобранные.`)) return;
+  const r = await api(`/${entity}/${id}`, { method: "DELETE" }); closeDrawer(); location.hash = "#" + state.view; route(); if (r.deals_removed) alert(`Удалено вместе с ${r.deals_removed} сделками`);
+} }, "Удалить") : null;
 
 /* ——— лента и комментарии ——— */
 function feedSection(entity, id, activities, reload) {

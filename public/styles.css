@@ -373,3 +373,6 @@ textarea.note { width: 100%; padding: 8px 10px; background: var(--bg); border: 1
 .ed-item .del { position: absolute; top: 6px; right: 6px; }
 .ed { width: 100%; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 13px; line-height: 1.45; resize: vertical; }
 .tg-code { font-size: 28px; font-weight: 600; letter-spacing: .15em; color: var(--accent); padding: 8px 0; }
+
+.del-entity { margin-left: auto; color: var(--dim); }
+.del-entity:hover { color: var(--bad); border-color: var(--bad); }

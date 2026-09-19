@@ -206,6 +206,33 @@ app.post("/api/leads/:id/convert", (req, res) => {
   res.status(201).json(db.prepare(`SELECT * FROM deals WHERE id = ?`).get(dealId));
 });
 
+/* ——— удаление: только администратор. Компания уносит свои сделки; письма отвязываются, а не удаляются ——— */
+function removeEntity(table, entity) {
+  return (req, res) => {
+    if (!req.user?.is_admin) return res.status(403).json({ error: "удалять может только администратор" });
+    const id = Number(req.params.id);
+    const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    if (!row) return res.status(404).json({ error: "not found" });
+    const title = row.company || row.title || row.name;
+    let dealsRemoved = 0;
+    if (table === "companies") {
+      for (const d of db.prepare(`SELECT id FROM deals WHERE company_id = ?`).all(id)) { db.prepare(`DELETE FROM deals WHERE id = ?`).run(d.id); db.prepare(`DELETE FROM activities WHERE entity_type = 'deal' AND entity_id = ?`).run(d.id); db.prepare(`UPDATE mail_messages SET entity_type = NULL, entity_id = NULL WHERE entity_type = 'deal' AND entity_id = ?`).run(d.id); dealsRemoved++; }
+      db.prepare(`UPDATE leads SET company_id = NULL WHERE company_id = ?`).run(id);
+    }
+    if (table === "leads") { db.prepare(`DELETE FROM sequence_runs WHERE lead_id = ?`).run(id); db.prepare(`UPDATE deals SET lead_id = NULL WHERE lead_id = ?`).run(id); db.prepare(`UPDATE companies SET lead_id = NULL WHERE lead_id = ?`).run(id); }
+    if (table === "deals") db.prepare(`UPDATE leads SET deal_id = NULL, outcome = CASE WHEN outcome = 'won' THEN NULL ELSE outcome END WHERE deal_id = ?`).run(id);
+    db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+    db.prepare(`DELETE FROM activities WHERE entity_type = ? AND entity_id = ?`).run(entity, id);
+    db.prepare(`UPDATE mail_messages SET entity_type = NULL, entity_id = NULL WHERE entity_type = ? AND entity_id = ?`).run(entity, id);
+    if (table === "deals" && row.company_id) recalcCompany(row.company_id);
+    log("user", req.user.id, "system", `Удалён ${entity === "lead" ? "лид" : entity === "deal" ? "сделка" : "клиент"} #${id} «${title}»${dealsRemoved ? ` и ${dealsRemoved} сделок` : ""}`);
+    res.json({ ok: true, deals_removed: dealsRemoved });
+  };
+}
+app.delete("/api/leads/:id", removeEntity("leads", "lead"));
+app.delete("/api/deals/:id", removeEntity("deals", "deal"));
+app.delete("/api/companies/:id", removeEntity("companies", "company"));
+
 /* ——— сделки ——— */
 app.get("/api/deals", (req, res) => {
   const { outcome, q } = req.query;
