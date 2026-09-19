@@ -55,7 +55,9 @@ export function renderTemplate(templateKey, lead) {
     competitor: lead.competitor || "текущим поставщиком", segmentParagraph: pitch?.email || "", manager: sig.manager, phone: sig.phone, email: sig.email };
   const fill = (s) => s.replace(/\{\{(\w+)\}\}/g, (_, k) => map[k] ?? "");
   const footer = "\n\nЕсли предложение неактуально — просто ответьте «нет», больше не побеспокоим.";
-  return { subject: fill(t.subject), text: fill(t.body) + (templateKey === "first" ? footer : "") };
+  let body = fill(t.body);
+  if (templateKey === "first") body = body.replace(/Во вложении дилерский прайс и презентация\./, "Дилерский прайс и презентацию пришлю следующим письмом — или сразу отвечу на вопросы по телефону.");
+  return { subject: fill(t.subject), text: body + (templateKey === "first" ? footer : "") };
 }
 
 /* ——— запуск / остановка ——— */

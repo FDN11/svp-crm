@@ -4,13 +4,14 @@
 import { db, rowToCompany, rowToLead, log, touch, recalcDeal, recalcCompany } from "./db.js";
 
 const FIELDS = ["name", "legal_name", "inn", "vat", "city", "region", "segment", "address", "email", "site",
-  "contact_name", "contact_role", "note", "status", "order_interval_days", "next_order_at"];
+  "contact_name", "contact_role", "note", "status", "order_interval_days", "next_order_at", "owner_id", "order_habit"];
 
 export function companiesRoutes(app) {
   /* список: q, city, status, due=1 — только те, кому пора заказывать */
   app.get("/api/companies", (req, res) => {
-    const { q, city, status, due } = req.query;
+    const { q, city, status, due, owner } = req.query;
     const where = []; const params = [];
+    if (owner === "me") { where.push("c.owner_id = ?"); params.push(req.user.id); } else if (owner) { where.push("c.owner_id = ?"); params.push(Number(owner)); }
     if (status) { where.push("c.status = ?"); params.push(status); }
     if (city) { where.push("c.city = ?"); params.push(city); }
     if (q) { where.push("(c.name LIKE ? OR c.legal_name LIKE ? OR c.inn LIKE ? OR c.city LIKE ? OR c.phones LIKE ? OR c.email LIKE ?)"); params.push(...Array(6).fill(`%${q}%`)); }
@@ -35,9 +36,9 @@ export function companiesRoutes(app) {
   app.post("/api/companies", (req, res) => {
     const b = req.body || {};
     if (!b.name) return res.status(400).json({ error: "name is required" });
-    const info = db.prepare(`INSERT INTO companies (name, legal_name, inn, vat, city, region, segment, address, phones, email, site, contact_name, contact_role, note, order_interval_days)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(b.name, b.legal_name ?? null, b.inn ?? null, b.vat ?? "без НДС", b.city ?? null, b.region ?? null, b.segment ?? null,
-      b.address ?? null, JSON.stringify(b.phones ?? []), b.email ?? null, b.site ?? null, b.contact_name ?? null, b.contact_role ?? null, b.note ?? null, b.order_interval_days ?? null);
+    const info = db.prepare(`INSERT INTO companies (name, legal_name, inn, vat, city, region, segment, address, phones, email, site, contact_name, contact_role, note, order_interval_days, owner_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(b.name, b.legal_name ?? null, b.inn ?? null, b.vat ?? "без НДС", b.city ?? null, b.region ?? null, b.segment ?? null,
+      b.address ?? null, JSON.stringify(b.phones ?? []), b.email ?? null, b.site ?? null, b.contact_name ?? null, b.contact_role ?? null, b.note ?? null, b.order_interval_days ?? null, b.owner_id ?? req.user?.id ?? null);
     log("company", info.lastInsertRowid, "system", "Компания создана вручную");
     res.status(201).json(rowToCompany(db.prepare(`SELECT * FROM companies WHERE id = ?`).get(info.lastInsertRowid)));
   });
@@ -65,8 +66,8 @@ export function companiesRoutes(app) {
     if (!c) return res.status(404).json({ error: "company not found" });
     const b = req.body || {};
     const n = db.prepare(`SELECT COUNT(*) n FROM deals WHERE company_id = ?`).get(id).n + 1;
-    const info = db.prepare(`INSERT INTO deals (company_id, lead_id, title, company, city, vat, inn, contact_name, phone, email)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(id, c.lead_id, b.title || `${c.name} — заказ №${n}`, c.name, c.city, c.vat, c.inn, c.contact_name, c.phones[0] ?? null, c.email);
+    const info = db.prepare(`INSERT INTO deals (company_id, lead_id, title, company, city, vat, inn, contact_name, phone, email, owner_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, c.lead_id, b.title || `${c.name} — заказ №${n}`, c.name, c.city, c.vat, c.inn, c.contact_name, c.phones[0] ?? null, c.email, c.owner_id ?? req.user?.id ?? null);
     const dealId = info.lastInsertRowid;
     let copied = 0;
     if (b.copy_from) {

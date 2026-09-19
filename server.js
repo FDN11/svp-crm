@@ -60,13 +60,15 @@ const dealOutcomeKeys = new Set(DEAL_OUTCOMES.map((s) => s.key));
 
 /* ——— справочники ——— */
 app.get("/api/meta", (_req, res) => {
-  res.json({ LEAD_STAGES, LEAD_OUTCOMES, DEAL_STAGES, DEAL_OUTCOMES, user: _req.user });
+  const users = db.prepare(`SELECT id, name, active FROM users ORDER BY name`).all();
+  res.json({ LEAD_STAGES, LEAD_OUTCOMES, DEAL_STAGES, DEAL_OUTCOMES, user: _req.user, users });
 });
 
 /* ——— лиды ——— */
 app.get("/api/leads", (req, res) => {
-  const { q, city, segment, outcome } = req.query;
+  const { q, city, segment, outcome, owner } = req.query;
   const where = []; const params = [];
+  if (owner === "me") { where.push("owner_id = ?"); params.push(req.user.id); } else if (owner === "none") where.push("owner_id IS NULL"); else if (owner) { where.push("owner_id = ?"); params.push(Number(owner)); }
   if (outcome === "active") where.push("outcome IS NULL");
   else if (outcome) { where.push("outcome = ?"); params.push(outcome); }
   if (city) { where.push("city = ?"); params.push(city); }
@@ -89,10 +91,10 @@ app.post("/api/leads", (req, res) => {
   const b = req.body || {};
   if (!b.company) return res.status(400).json({ error: "company is required" });
   const info = db.prepare(`
-    INSERT INTO leads (ext_id, company, city, region, segment, is_chain, priority, phones, site, email, contact_name, points, source, source_note, competitor)
-    VALUES (@ext_id, @company, @city, @region, @segment, @is_chain, @priority, @phones, @site, @email, @contact_name, @points, @source, @source_note, @competitor)
+    INSERT INTO leads (ext_id, company, city, region, segment, is_chain, priority, phones, site, email, contact_name, points, source, source_note, competitor, owner_id)
+    VALUES (@ext_id, @company, @city, @region, @segment, @is_chain, @priority, @phones, @site, @email, @contact_name, @points, @source, @source_note, @competitor, @owner_id)
     ON CONFLICT(ext_id) DO NOTHING
-  `).run({
+  `).run({ owner_id: b.owner_id ?? req.user?.id ?? null,
     ext_id: b.ext_id ?? null, company: b.company, city: b.city ?? null, region: b.region ?? null,
     segment: b.segment ?? null, is_chain: b.is_chain ? 1 : 0, priority: b.priority ?? "средний",
     phones: JSON.stringify(b.phones ?? []), site: b.site ?? null, email: b.email ?? null,
@@ -138,7 +140,8 @@ app.patch("/api/leads/:id", (req, res) => {
   const lead = rowToLead(db.prepare(`SELECT * FROM leads WHERE id = ?`).get(id));
   if (!lead) return res.status(404).json({ error: "lead not found" });
   const b = req.body || {};
-  const allowed = ["company", "city", "region", "segment", "priority", "site", "email", "contact_name", "competitor", "next_action", "next_at", "source_note", "inn", "vat"];
+  const allowed = ["company", "city", "region", "segment", "priority", "site", "email", "contact_name", "competitor", "next_action", "next_at", "source_note", "inn", "vat", "owner_id"];
+  if ("owner_id" in b && b.owner_id !== lead.owner_id) { const u = b.owner_id ? db.prepare(`SELECT name FROM users WHERE id = ?`).get(b.owner_id) : null; log("lead", id, "system", u ? `Ответственный: ${u.name}` : "Ответственный снят"); }
   const sets = []; const params = [];
   for (const k of allowed) if (k in b) { sets.push(`${k} = ?`); params.push(b[k]); }
   if ("phones" in b) { sets.push(`phones = ?`); params.push(JSON.stringify(b.phones)); }
@@ -176,19 +179,19 @@ app.post("/api/leads/:id/convert", (req, res) => {
       || db.prepare(`SELECT id FROM companies WHERE lower(name) = lower(?) AND COALESCE(city,'') = COALESCE(?, '')`).get(lead.company, lead.city);
     if (existing) companyId = existing.id;
     else {
-      const c = db.prepare(`INSERT INTO companies (name, inn, vat, city, region, segment, phones, email, site, contact_name, lead_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(lead.company, b.inn ?? null, b.vat ?? "без НДС", lead.city, lead.region, lead.segment,
-        JSON.stringify(lead.phones), lead.email, lead.site, lead.contact_name, id);
+      const c = db.prepare(`INSERT INTO companies (name, inn, vat, city, region, segment, phones, email, site, contact_name, lead_id, owner_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(lead.company, b.inn ?? null, b.vat ?? "без НДС", lead.city, lead.region, lead.segment,
+        JSON.stringify(lead.phones), lead.email, lead.site, lead.contact_name, id, lead.owner_id ?? req.user?.id ?? null);
       companyId = c.lastInsertRowid;
       log("company", companyId, "system", `Компания создана из лида #${id}`);
     }
     db.prepare(`UPDATE leads SET company_id = ? WHERE id = ?`).run(companyId, id);
   }
   const info = db.prepare(`
-    INSERT INTO deals (lead_id, company_id, title, company, city, vat, inn, contact_name, phone, email)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+    INSERT INTO deals (lead_id, company_id, title, company, city, vat, inn, contact_name, phone, email, owner_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     id, companyId, b.title || `${lead.company} — первая партия`, lead.company, lead.city,
-    b.vat ?? "без НДС", b.inn ?? null, lead.contact_name, lead.phones[0] ?? null, lead.email);
+    b.vat ?? "без НДС", b.inn ?? null, lead.contact_name, lead.phones[0] ?? null, lead.email, lead.owner_id ?? req.user?.id ?? null);
   const dealId = info.lastInsertRowid;
   db.prepare(`UPDATE leads SET outcome = 'won', deal_id = ?, updated_at = datetime('now') WHERE id = ?`).run(dealId, id);
   log("lead", id, "stage", `Переведён в сделку #${dealId}`);
@@ -218,8 +221,8 @@ app.get("/api/deals/:id", (req, res) => {
 app.post("/api/deals", (req, res) => {
   const b = req.body || {};
   if (!b.title && !b.company) return res.status(400).json({ error: "title or company required" });
-  const info = db.prepare(`INSERT INTO deals (title, company, company_id, city, vat, inn, contact_name, phone, email) VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(b.title || b.company, b.company ?? null, b.company_id ?? null, b.city ?? null, b.vat ?? "без НДС", b.inn ?? null, b.contact_name ?? null, b.phone ?? null, b.email ?? null);
+  const info = db.prepare(`INSERT INTO deals (title, company, company_id, city, vat, inn, contact_name, phone, email, owner_id) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(b.title || b.company, b.company ?? null, b.company_id ?? null, b.city ?? null, b.vat ?? "без НДС", b.inn ?? null, b.contact_name ?? null, b.phone ?? null, b.email ?? null, b.owner_id ?? req.user?.id ?? null);
   log("deal", info.lastInsertRowid, "system", "Сделка создана вручную");
   res.status(201).json(db.prepare(`SELECT * FROM deals WHERE id = ?`).get(info.lastInsertRowid));
 });
@@ -229,7 +232,7 @@ app.patch("/api/deals/:id", (req, res) => {
   const deal = db.prepare(`SELECT * FROM deals WHERE id = ?`).get(id);
   if (!deal) return res.status(404).json({ error: "deal not found" });
   const b = req.body || {};
-  const allowed = ["title", "company", "city", "vat", "inn", "contact_name", "phone", "email", "next_action", "next_at"];
+  const allowed = ["title", "company", "city", "vat", "inn", "contact_name", "phone", "email", "next_action", "next_at", "owner_id"];
   const sets = []; const params = [];
   for (const k of allowed) if (k in b) { sets.push(`${k} = ?`); params.push(b[k]); }
   if ("stage" in b) {
@@ -319,6 +322,10 @@ function logCall(table, entity) {
   };
 }
 app.post("/api/leads/:id/call", logCall("leads", "lead"));
+/* один клик: не дозвонился → перезвонить завтра (или в указанную дату) */
+const noAnswer = (table, entity) => (req, res) => { req.body = { result: "no_answer", comment: req.body?.comment, next_at: req.body?.next_at }; logCall(table, entity)(req, res); };
+app.post("/api/leads/:id/no-answer", noAnswer("leads", "lead"));
+app.post("/api/deals/:id/no-answer", noAnswer("deals", "deal"));
 app.post("/api/deals/:id/call", logCall("deals", "deal"));
 app.post("/api/companies/:id/call", logCall("companies", "company"));
 app.post("/api/leads/:id/activities", addActivity("leads", "lead"));

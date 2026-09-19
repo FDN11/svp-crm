@@ -343,3 +343,24 @@ textarea.note { width: 100%; padding: 8px 10px; background: var(--bg); border: 1
 .qf .fields select { padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 14px; }
 .d-sub.src { margin-top: 4px; color: var(--dim); }
 .feed-item.k-call { border-left-color: var(--ok); }
+
+/* меню «Ещё» */
+.nav .more { position: relative; }
+.nav .more summary { list-style: none; padding: 8px 12px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+.nav .more summary::-webkit-details-marker { display: none; }
+.nav .more:hover summary, .nav .more.active summary { color: var(--text); }
+.nav .more.active summary { border-color: var(--accent); }
+.more-menu { position: absolute; top: 100%; left: 0; z-index: 50; min-width: 160px; background: var(--surface); border: 1px solid var(--border); display: flex; flex-direction: column; padding: 4px 0; }
+.more-menu a { padding: 8px 14px; border-bottom: 0 !important; }
+.more-menu a:hover, .more-menu a.active { background: var(--surface-2); color: var(--text); }
+/* полка исходов */
+.rail-wrap { margin-top: 12px; }
+.rail-wrap summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 8px 0; display: flex; gap: 6px; align-items: center; }
+.rail-wrap summary:hover { color: var(--text); }
+.rail-wrap .rail { margin-top: 8px; }
+.col-body .more { align-self: center; margin-top: 4px; }
+/* быстрые действия в «Сегодня» */
+.tb-quick { display: flex; gap: 4px; align-items: center; opacity: .55; }
+.tb-row:hover .tb-quick { opacity: 1; }
+.tb-quick .btn { padding: 3px 7px; font-size: 12px; }
+.owner-sel { padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 14px; }

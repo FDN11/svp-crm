@@ -233,6 +233,10 @@ addColumn("deals", "company_id", "INTEGER REFERENCES companies(id)");
 addColumn("leads", "company_id", "INTEGER");
 addColumn("deals", "closed_at", "TEXT");
 addColumn("leads", "inn", "TEXT");
+addColumn("leads", "owner_id", "INTEGER");
+addColumn("companies", "owner_id", "INTEGER");
+addColumn("deals", "owner_id", "INTEGER");
+addColumn("companies", "order_habit", "TEXT");
 addColumn("leads", "vat", "TEXT");
 db.exec(`CREATE INDEX IF NOT EXISTS idx_deals_company ON deals(company_id)`);
 

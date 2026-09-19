@@ -25,6 +25,9 @@ const api = async (path, opts = {}) => {
   return r.json();
 };
 
+const userName = (id) => state.meta?.users?.find((u) => u.id === id)?.name || null;
+const ownerSelect = (value, onchange) => el("select", { class: "owner-sel", title: "Ответственный", onchange: (e) => onchange(e.target.value ? Number(e.target.value) : null) },
+  el("option", { value: "", selected: !value ? "" : null }, "— без ответственного —"), (state.meta?.users || []).filter((u) => u.active || u.id === value).map((u) => el("option", { value: u.id, selected: u.id === value ? "" : null }, u.name)));
 /* replaceChildren превращает null в текст «null» — фильтруем */
 const fillDrawer = (node, ...kids) => node.replaceChildren(...kids.flat().filter(Boolean));
 const state = { meta: null, view: "leads", q: "", city: "", segment: "", products: [] };
@@ -36,6 +39,7 @@ async function route() {
   const [view, id] = hash.split("/");
   state.view = view;
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  const more = document.querySelector(".nav .more"); if (more) { more.classList.toggle("active", ["products", "scripts", "sequences", "settings"].includes(view)); more.open = false; }
   if (view === "today") await renderToday();
   else if (view === "leads") await renderLeads();
   else if (view === "deals") await renderDeals();
@@ -65,6 +69,7 @@ async function refreshStats() {
 /* ——— ЛИДЫ ——— */
 async function renderLeads() {
   const params = new URLSearchParams({ outcome: "active" });
+  if (state.mine) params.set("owner", "me");
   if (state.q) params.set("q", state.q);
   if (state.city) params.set("city", state.city);
   if (state.segment) params.set("segment", state.segment);
@@ -77,29 +82,38 @@ async function renderLeads() {
     el("h1", {}, "Лиды"),
     el("span", { class: "d-sub" }, `${leads.length} в работе`),
     el("div", { class: "filters" },
+      el("button", { class: "btn btn-sm" + (state.mine ? " btn-ok" : " btn-ghost"), onclick: () => { state.mine = !state.mine; localStorage.setItem("svp.mine", state.mine ? "1" : ""); route(); } }, state.mine ? "Мои" : "Все"),
       withEmail.length ? el("button", { class: "btn btn-sm", title: "Запустить холодную цепочку для всех новых лидов с e-mail в текущем фильтре", onclick: async () => { if (!confirm(`Запустить цепочку писем для ${withEmail.length} новых лидов с e-mail?`)) return; const r = await api("/sequences/start", { method: "POST", body: { lead_ids: withEmail.map((l) => l.id) } }); alert(`В цепочке: ${r.started}. Пропущено: ${r.skipped.length}`); route(); } }, `▶ В цепочку (${withEmail.length})`) : null,
       select(["Все города", ...cities], state.city, (v) => { state.city = v; renderLeads(); }),
       select(["Все сегменты", ...segments], state.segment, (v) => { state.segment = v; renderLeads(); }),
     ));
 
   const board = el("div", { class: "board" });
+  const PAGE = 50;
   for (const st of state.meta.LEAD_STAGES) {
     const items = leads.filter((l) => l.stage === st.key);
+    const body = el("div", { class: "col-body" }, items.slice(0, PAGE).map(leadCard));
+    if (items.length > PAGE) { let shown = PAGE; const more = el("button", { class: "btn btn-sm btn-ghost more", onclick: () => { items.slice(shown, shown + PAGE).forEach((l) => body.insertBefore(leadCard(l), more)); shown += PAGE; if (shown >= items.length) more.remove(); else more.textContent = `Показать ещё (${items.length - shown})`; } }, `Показать ещё (${items.length - PAGE})`); body.append(more); }
     const col = el("div", { class: "col", "data-stage": st.key },
       el("div", { class: "col-head" }, el("b", {}, st.title), el("span", {}, String(items.length))),
-      el("div", { class: "col-body" }, items.map(leadCard)));
+      body);
     dropzone(col, async (id) => { await api(`/leads/${id}`, { method: "PATCH", body: { stage: st.key } }); renderLeads(); refreshStats(); });
     board.append(col);
   }
 
-  // хвосты: догрев / неквал / отказ
-  const rail = el("div", { class: "rail" });
+  // хвосты: догрев / неквал / отказ — свёрнуты по умолчанию
+  const tailsOpen = localStorage.getItem("svp.tails") === "1";
+  const rail = el("details", { class: "rail-wrap", ontoggle: (e) => localStorage.setItem("svp.tails", e.target.open ? "1" : "") },
+    el("summary", {}, "Исходы: ", ...state.meta.LEAD_OUTCOMES.filter((o) => o.key !== "won").map((o) => el("span", { class: "tag" }, `${o.title} ${tails.filter((l) => l.outcome === o.key).length}`))));
+  if (tailsOpen) rail.open = true;
+  const railInner = el("div", { class: "rail" });
   for (const o of state.meta.LEAD_OUTCOMES.filter((o) => o.key !== "won")) {
     const items = tails.filter((l) => l.outcome === o.key);
-    rail.append(el("div", { class: "col" },
+    railInner.append(el("div", { class: "col" },
       el("div", { class: "col-head" }, el("b", {}, o.title), el("span", {}, String(items.length))),
-      el("div", { class: "col-body" }, items.length ? items.map(leadCard) : el("div", { class: "empty" }, "—"))));
+      el("div", { class: "col-body" }, items.length ? items.slice(0, 30).map(leadCard) : el("div", { class: "empty" }, "—"))));
   }
+  rail.append(railInner);
 
   $("#view").replaceChildren(head, board, rail);
 }
@@ -109,7 +123,7 @@ function leadCard(l) {
     el("div", { class: "card-title" }, el("span", {}, l.company), l.is_chain ? el("span", { class: "chain" }, l.points.length > 1 ? `сеть · ${l.points.length}` : "сеть") : null),
     el("div", { class: "card-meta" }, [l.city, l.segment].filter(Boolean).join(" · ")),
     el("div", { class: "card-foot" },
-      el("span", {}, l.competitor ? `продаёт ${l.competitor}` : (l.source || "")),
+      el("span", {}, (l.owner_id && userName(l.owner_id) ? userName(l.owner_id).split(" ")[0] + " · " : "") + (l.competitor ? `продаёт ${l.competitor}` : (l.source || ""))),
       l.next_at ? el("span", { class: isDue(l.next_at) ? "due" : "" }, `${l.next_action || "касание"} · ${fmtDay(l.next_at)}`) : null));
   draggable(c, l.id);
   return c;
@@ -136,6 +150,7 @@ async function openLead(id) {
 
     el("div", { class: "d-actions" },
       callBtn("leads", id, l.phones[0], () => openLead(id)),
+      !l.outcome ? el("button", { class: "btn btn-sm btn-ghost", title: "Не дозвонился — перезвонить завтра", onclick: async () => { await api(`/leads/${id}/no-answer`, { method: "POST", body: {} }); openLead(id); refreshStats(); } }, "↷ Не дозвонился, завтра") : null,
       !l.deal_id
         ? el("button", { class: "btn btn-accent", title: "Создаст карточку клиента и первую сделку", onclick: async () => { const d = await api(`/leads/${id}/convert`, { method: "POST", body: {} }); location.hash = `deals/${d.id}`; } }, "В клиенты и сделку →")
         : el("a", { class: "btn btn-accent", href: `#deals/${l.deal_id}` }, `Сделка #${l.deal_id} →`),
@@ -148,6 +163,7 @@ async function openLead(id) {
       el("div", { class: "phones" }, l.phones.map((p) => el("a", { href: "tel:" + p.replace(/\D/g, "") }, p)), l.site ? el("a", { href: l.site, target: "_blank", rel: "noopener" }, l.site.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")) : null),
       el("div", { class: "fields", style: "margin-top:10px" },
         field("Контактное лицо", "contact_name"), field("Почта", "email", "email"),
+        el("label", { class: "field" }, "Ответственный", ownerSelect(l.owner_id, (v) => patchLead(id, { owner_id: v }))),
         el("label", { class: "field" }, "Приоритет", select(["высокий", "средний", "низкий"], l.priority, (v) => patchLead(id, { priority: v }))),
         field("Конкурент на полке", "competitor"),
         field("ИНН", "inn"), el("label", { class: "field" }, "НДС", select(["без НДС", "с НДС"], l.vat || "без НДС", (v) => patchLead(id, { vat: v }))),
@@ -263,6 +279,7 @@ async function openDeal(id) {
 
     el("div", { class: "d-section" }, el("h3", {}, "Реквизиты и контакт"),
       el("div", { class: "fields" },
+        el("label", { class: "field" }, "Ответственный", ownerSelect(d.owner_id, (v) => patch({ owner_id: v }))),
         el("label", { class: "field" }, "НДС", select(["без НДС", "с НДС"], d.vat, (v) => patch({ vat: v }))),
         field("ИНН", "inn"), field("Контактное лицо", "contact_name"), field("Телефон", "phone", "tel"), field("Почта", "email", "email"),
         field("Следующее действие", "next_action"), field("Когда", "next_at", "date"))),
@@ -369,11 +386,12 @@ const daysUntil = (iso) => iso ? Math.round((new Date(iso) - new Date(new Date()
 const dueLabel = (iso) => { const d = daysUntil(iso); if (d == null) return null; return d < 0 ? `просрочен на ${-d} дн.` : d === 0 ? "сегодня" : d <= 7 ? `через ${d} дн.` : fmtDay(iso); };
 
 async function renderCompanies() {
-  const params = new URLSearchParams(); if (state.q) params.set("q", state.q); if (state.cstatus) params.set("status", state.cstatus);
+  const params = new URLSearchParams(); if (state.q) params.set("q", state.q); if (state.cstatus) params.set("status", state.cstatus); if (state.mine) params.set("owner", "me");
   const rows = await api("/companies?" + params);
   const due = rows.filter((c) => c.status === "active" && daysUntil(c.next_order_at) != null && daysUntil(c.next_order_at) <= 7 && !c.open_deals);
   const head = el("div", { class: "view-head" }, el("h1", {}, "Клиенты"), el("span", { class: "d-sub" }, `${rows.length} компаний · ${rub(rows.reduce((a, c) => a + c.total_amount, 0))} за всё время`),
-    el("div", { class: "filters" }, select(["Все статусы", "active", "paused", "lost"], state.cstatus, (v) => { state.cstatus = v; renderCompanies(); }),
+    el("div", { class: "filters" }, el("button", { class: "btn btn-sm" + (state.mine ? " btn-ok" : " btn-ghost"), onclick: () => { state.mine = !state.mine; localStorage.setItem("svp.mine", state.mine ? "1" : ""); route(); } }, state.mine ? "Мои" : "Все"),
+      select(["Все статусы", "active", "paused", "lost"], state.cstatus, (v) => { state.cstatus = v; renderCompanies(); }),
       el("button", { class: "btn btn-sm", onclick: newCompany }, "+ Клиент")));
   const card = (c) => el("div", { class: "card" + (due.includes(c) ? " p-high" : ""), onclick: () => openCompany(c.id) },
     el("div", { class: "card-title" }, el("span", {}, c.name), c.status !== "active" ? el("span", { class: "chain" }, c.status === "paused" ? "пауза" : "потерян") : null),
@@ -435,6 +453,7 @@ async function openCompany(id) {
 
     el("div", { class: "d-section" }, el("h3", {}, "Реквизиты и доставка"),
       el("div", { class: "fields" },
+        el("label", { class: "field" }, "Ответственный", ownerSelect(c.owner_id, (v) => patch({ owner_id: v }))),
         field("Юр. название", "legal_name"), field("ИНН", "inn"),
         el("label", { class: "field" }, "НДС", select(["без НДС", "с НДС"], c.vat, (v) => patch({ vat: v }))),
         field("Город", "city"), el("label", { class: "field wide" }, "Адрес доставки", el("input", { value: c.address ?? "", onchange: (e) => patch({ address: e.target.value }) })))),
@@ -447,7 +466,8 @@ async function openCompany(id) {
     el("div", { class: "d-section" }, el("h3", {}, "Ритм заказов"),
       el("div", { class: "fields" },
         el("label", { class: "field" }, "Интервал, дней (пусто — по истории)", el("input", { type: "number", min: 7, value: c.order_interval_days ?? "", onchange: (e) => patch({ order_interval_days: e.target.value ? Number(e.target.value) : null }).then(() => openCompany(id)) })),
-        el("label", { class: "field" }, "Следующий заказ ожидаем", el("input", { type: "date", value: c.next_order_at ?? "", onchange: (e) => patch({ next_order_at: e.target.value || null }) }))),
+        el("label", { class: "field" }, "Следующий заказ ожидаем", el("input", { type: "date", value: c.next_order_at ?? "", onchange: (e) => patch({ next_order_at: e.target.value || null }) })),
+        el("label", { class: "field wide" }, "Когда обычно заказывают (словами)", el("input", { value: c.order_habit ?? "", placeholder: "например: в конце месяца, перед сезоном, по звонку мастера", onchange: (e) => patch({ order_habit: e.target.value }) }))),
       el("div", { class: "d-sub" }, "Когда дата подходит и открытой сделки нет — клиент попадает в «Пора заказывать» в шапке и на доске.")),
 
     el("div", { class: "d-section" }, el("h3", {}, "Заметка"), el("textarea", { class: "note", rows: 3, onchange: (e) => patch({ note: e.target.value }) }, c.note ?? "")),
@@ -588,21 +608,26 @@ async function renderMail() {
 const linkTo = (type, id) => `#${type === "company" ? "companies" : type + "s"}/${id}`;
 const openEntity = (type, id) => { location.hash = linkTo(type, id); };
 async function renderToday() {
-  const t = await api("/today");
+  const t = await api("/today" + (state.mine ? "?scope=mine" : ""));
   const me = state.meta.user;
+  const quick = (...btns) => el("div", { class: "tb-quick", onclick: (e) => e.stopPropagation() }, btns.filter(Boolean));
+  const qbtn = (label, title, fn) => el("button", { class: "btn btn-sm btn-ghost", title, onclick: async (e) => { e.stopPropagation(); await fn(); renderToday(); refreshStats(); } }, label);
+  const noAns = (type, id) => qbtn("↷ завтра", "Не дозвонился — перезвонить завтра", () => api(`/${type}s/${id}/no-answer`, { method: "POST", body: {} }));
+  const callQ = (type, id, phone) => qbtn("☎", "Позвонить и записать результат", async () => { if (phone) window.open("tel:" + phone.replace(/\D/g, ""), "_self"); await logCall(type + "s" === "companys" ? "companies" : type + "s", id, () => {}); });
   const block = (title, count, hint, kids, cls = "") => el("section", { class: "today-block " + cls }, el("div", { class: "tb-head" }, el("h2", {}, title), count ? el("span", { class: "tb-count" }, String(count)) : null, hint ? el("span", { class: "d-sub" }, hint) : null), kids?.length ? el("div", { class: "tb-list" }, kids) : el("div", { class: "empty small" }, "Пусто — хорошо"));
-  const row = (main, sub, right, onclick, cls = "") => el("div", { class: "tb-row " + cls, onclick }, el("div", { class: "tb-main" }, el("b", {}, main), sub ? el("span", {}, sub) : null), right ? el("div", { class: "tb-right" }, right) : null);
+  const row = (main, sub, right, onclick, cls = "", quickEl = null) => el("div", { class: "tb-row " + cls, onclick }, el("div", { class: "tb-main" }, el("b", {}, main), sub ? el("span", {}, sub) : null), quickEl, right ? el("div", { class: "tb-right" }, right) : null);
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Доброе утро" : hour < 18 ? "Добрый день" : "Добрый вечер";
   $("#view").replaceChildren(
     el("div", { class: "view-head" }, el("h1", {}, `${greet}, ${me.name.split(" ")[0]}`),
+      el("div", { class: "tabs" }, el("button", { class: "tab" + (state.mine ? " on" : ""), onclick: () => { state.mine = true; localStorage.setItem("svp.mine", "1"); renderToday(); } }, "Мои"), el("button", { class: "tab" + (!state.mine ? " on" : ""), onclick: () => { state.mine = false; localStorage.setItem("svp.mine", ""); renderToday(); } }, "Все")),
       el("span", { class: "d-sub" }, `сегодня: ${t.done.calls} звонков · ${t.done.emails} писем · ${t.done.comments} комментариев · ${t.done.stages} движений по воронке${t.done.won.n ? ` · выиграно ${t.done.won.n} на ${rub(t.done.won.amount)}` : ""}${t.done.sequence_sent ? ` · цепочка отправила ${t.done.sequence_sent}` : ""}`)),
     el("div", { class: "today" },
-      block("Заявки с сайта", t.fresh.length, "новые, ещё не тронуты", t.fresh.map((l) => row(l.company, [l.contact_name, l.city, l.phones[0]].filter(Boolean).join(" · "), fmtDate(l.created_at), () => openEntity("lead", l.id), "hot")), t.fresh.length ? "accent" : ""),
+      block("Заявки с сайта", t.fresh.length, "новые, ещё не тронуты", t.fresh.map((l) => row(l.company, [l.contact_name, l.city, l.phones[0]].filter(Boolean).join(" · "), fmtDate(l.created_at), () => openEntity("lead", l.id), "hot", quick(callQ("lead", l.id, l.phones[0]), noAns("lead", l.id)))), t.fresh.length ? "accent" : ""),
       block("Ответили", t.replied.length, "входящие без нашего ответа за 7 дней", t.replied.map((m) => row(m.title || m.from_name || m.from_addr, `${m.subject} — ${m.snippet?.slice(0, 90)}`, fmtDate(m.date), () => openMessage(m.mail_id), m.seen ? "" : "unread"))),
       block("Неразобранные письма", t.unassigned.length, null, t.unassigned.slice(0, 6).map((m) => row(m.from_name || m.from_addr, m.subject, fmtDate(m.date), () => { location.hash = "mail"; })).concat(t.unassigned.length > 6 ? [el("a", { class: "text-link", href: "#mail" }, `ещё ${t.unassigned.length - 6} → в «Почту»`)] : [])),
-      block("Касания на сегодня", t.touches.length, "следующее действие с датой ≤ сегодня", t.touches.map((x) => row(x.title, `${x.next_action || "касание"} · ${x.type === "lead" ? "лид" : "сделка"}${x.city ? " · " + x.city : ""}`, el("span", { class: isDue(x.next_at) && daysUntil(x.next_at) < 0 ? "due" : "" }, fmtDay(x.next_at)), () => openEntity(x.type, x.id)))),
-      block("Пора заказывать", t.reorder.length, "ритм подошёл, открытой сделки нет", t.reorder.map((c) => row(c.name, `${c.orders_count} заказов · ${rub(c.total_amount)} · последний ${fmtDay(c.last_order_at)}${c.phones[0] ? " · " + c.phones[0] : ""}`, el("span", { class: "due" }, dueLabel(c.next_order_at)), () => openEntity("company", c.id)))),
+      block("Касания на сегодня", t.touches.length, "следующее действие с датой ≤ сегодня", t.touches.map((x) => row(x.title, `${x.next_action || "касание"} · ${x.type === "lead" ? "лид" : "сделка"}${x.city ? " · " + x.city : ""}`, el("span", { class: isDue(x.next_at) && daysUntil(x.next_at) < 0 ? "due" : "" }, fmtDay(x.next_at)), () => openEntity(x.type, x.id), "", quick(callQ(x.type, x.id, x.phone), noAns(x.type, x.id))))),
+      block("Пора заказывать", t.reorder.length, "ритм подошёл, открытой сделки нет", t.reorder.map((c) => row(c.name, `${c.orders_count} заказов · ${rub(c.total_amount)} · последний ${fmtDay(c.last_order_at)}${c.phones[0] ? " · " + c.phones[0] : ""}${c.order_habit ? " · " + c.order_habit : ""}`, el("span", { class: "due" }, dueLabel(c.next_order_at)), () => openEntity("company", c.id), "", quick(callQ("company", c.id, c.phones[0]), qbtn("+ сделка", "Повторить последний заказ", async () => { const d = await api(`/companies/${c.id}/deals`, { method: "POST", body: { copy_from: (await api(`/companies/${c.id}`)).deals.find((x) => x.outcome === "won")?.id } }); location.hash = `deals/${d.id}`; }))))),
       block("Зависшие сделки", t.stale.length, `без движения больше 7 дней`, t.stale.map((d) => row(d.title, `${state.meta.DEAL_STAGES.find((s) => s.key === d.stage)?.title} · ${rub(d.amount)}`, `${d.days} дн.`, () => openEntity("deal", d.id))))));
 }
 
@@ -784,5 +809,6 @@ document.addEventListener("keydown", (e) => e.key === "Escape" && !$("#drawer").
 (async () => {
   try { [state.meta, state.products, mailAccounts] = await Promise.all([api("/meta"), api("/products"), api("/mail/accounts")]); } catch { return; }
   $("#user-name").textContent = state.meta.user?.name || "";
+  state.mine = localStorage.getItem("svp.mine") === "1";
   route();
 })();
